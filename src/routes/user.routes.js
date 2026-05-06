@@ -10,6 +10,7 @@ router.use(protect);
 
 router.get('/', userController.listUsers);
 router.get('/me', userController.getMe);
+router.get('/location-options/algeria', userController.getAlgerianCities);
 router.get('/me/skills/offered', userController.getOfferedSkills);
 router.get('/me/skills/wanted', userController.getWantedSkills);
 router.put('/me', validate(updateMeSchema), userController.updateMe);

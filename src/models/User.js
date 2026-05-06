@@ -33,6 +33,29 @@ const userSchema = new mongoose.Schema({
   bio: {
     type: String,
   },
+  portfolioUrl: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  resumeFileName: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  resumeStoredName: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  resumeMimeType: {
+    type: String,
+    trim: true,
+    default: '',
+  },
+  resumeUploadedAt: {
+    type: Date,
+  },
   countryId: {
     type: String,
     trim: true,

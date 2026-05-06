@@ -29,6 +29,15 @@ const getWantedSkills = async (req, res, next) => {
   }
 };
 
+const getAlgerianCities = async (req, res, next) => {
+  try {
+    const cities = await userService.listAlgerianCities();
+    res.status(200).json(new ApiResponse(200, cities, 'Algerian cities fetched successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 const updateMe = async (req, res, next) => {
   try {
     const user = await userService.updateUserProfile(req.user.userId, req.body);
@@ -106,6 +115,7 @@ module.exports = {
   getMe,
   getOfferedSkills,
   getWantedSkills,
+  getAlgerianCities,
   updateMe,
   getUserById,
   getUserRatings,

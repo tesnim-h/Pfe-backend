@@ -45,6 +45,10 @@ const validationRequestSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    requestNote: {
+      type: String,
+      default: '',
+    },
     validationFeedback: {
       type: String,
       default: '',

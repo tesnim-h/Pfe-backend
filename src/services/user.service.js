@@ -1,7 +1,24 @@
+const { randomUUID } = require('crypto');
+const fs = require('fs/promises');
+const path = require('path');
+
+const City = require('../models/City');
+const Country = require('../models/Country');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
+const { ALGERIA_CITY_NAMES } = require('../constants/algeria-cities');
 
 const USER_ROLES = ['LEARNER', 'MENTOR', 'ADMIN'];
+const RESUME_UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'resumes');
+const MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+const ALGERIA_COUNTRY_CODE = 'DZ';
+const ALGERIA_COUNTRY_NAME = 'Algeria';
+const ALGERIA_COUNTRY_ID = 'COUNTRY-DZ';
+const ALLOWED_RESUME_MIME_TYPES = new Map([
+  ['application/pdf', '.pdf'],
+  ['application/msword', '.doc'],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'],
+]);
 
 const escapeRegExp = (value) => {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -17,10 +34,154 @@ const splitDisplayName = (name) => {
   };
 };
 
+const buildResumeDownloadUrl = (storedName = '') => {
+  return storedName ? `/uploads/resumes/${encodeURIComponent(storedName)}` : '';
+};
+
+const buildResumePublicFields = (userLike = {}) => {
+  return {
+    resumeFileName: userLike.resumeFileName || '',
+    resumeMimeType: userLike.resumeMimeType || '',
+    resumeUploadedAt: userLike.resumeUploadedAt || null,
+    resumeDownloadUrl: buildResumeDownloadUrl(userLike.resumeStoredName),
+  };
+};
+
+const sanitizeFileName = (fileName = '') => {
+  return String(fileName)
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/\s+/g, ' ')
+    .slice(0, 255);
+};
+
+const buildCityIdFromName = (cityName = '') => {
+  const normalizedKey = String(cityName)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return `CITY-DZ-${normalizedKey}`;
+};
+
+const removeResumeFile = async (storedName = '') => {
+  if (!storedName) {
+    return;
+  }
+
+  try {
+    await fs.unlink(path.join(RESUME_UPLOAD_DIR, storedName));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error;
+    }
+  }
+};
+
+const ensureAlgeriaCountry = async () => {
+  let country = await Country.findOne({
+    $or: [
+      { countryId: ALGERIA_COUNTRY_ID },
+      { code: ALGERIA_COUNTRY_CODE },
+      { name: new RegExp(`^${escapeRegExp(ALGERIA_COUNTRY_NAME)}$`, 'i') },
+    ],
+  });
+
+  if (!country) {
+    country = await Country.create({
+      countryId: ALGERIA_COUNTRY_ID,
+      code: ALGERIA_COUNTRY_CODE,
+      name: ALGERIA_COUNTRY_NAME,
+      phoneCode: '+213',
+      currency: 'DZD',
+      isActive: true,
+    });
+  } else if (!country.isActive) {
+    country.isActive = true;
+    await country.save();
+  }
+
+  return country;
+};
+
+const ensureAlgerianCities = async () => {
+  const country = await ensureAlgeriaCountry();
+  const existingCities = await City.find({ countryId: country.countryId }).lean();
+  const existingCityNameMap = new Map(
+    existingCities.map((city) => [city.name.trim().toLowerCase(), city])
+  );
+  const missingCities = ALGERIA_CITY_NAMES.filter((cityName) => {
+    return !existingCityNameMap.has(cityName.toLowerCase());
+  }).map((cityName) => ({
+    cityId: buildCityIdFromName(cityName),
+    countryId: country.countryId,
+    name: cityName,
+    isActive: true,
+  }));
+
+  if (missingCities.length > 0) {
+    await City.insertMany(missingCities, { ordered: false });
+  }
+
+  return City.find({ countryId: country.countryId, isActive: true })
+    .sort({ name: 1 })
+    .lean();
+};
+
+const saveResumeFile = async ({ fileName = '', fileDataUrl = '' } = {}) => {
+  const normalizedFileName = sanitizeFileName(fileName);
+  const normalizedDataUrl = String(fileDataUrl || '').trim();
+  const dataUrlMatch = normalizedDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+
+  if (!normalizedFileName || !dataUrlMatch) {
+    throw new ApiError(400, 'A valid resume file is required', 'VALIDATION_ERROR');
+  }
+
+  const mimeType = dataUrlMatch[1].trim().toLowerCase();
+  const fileExtension = ALLOWED_RESUME_MIME_TYPES.get(mimeType);
+
+  if (!fileExtension) {
+    throw new ApiError(
+      400,
+      'Resume file must be a PDF, DOC, or DOCX document',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  const fileBuffer = Buffer.from(dataUrlMatch[2], 'base64');
+
+  if (!fileBuffer.length || fileBuffer.length > MAX_RESUME_FILE_SIZE_BYTES) {
+    throw new ApiError(
+      400,
+      'Resume file must be smaller than 5 MB',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  await fs.mkdir(RESUME_UPLOAD_DIR, { recursive: true });
+
+  const storedName = `${randomUUID()}${fileExtension}`;
+  await fs.writeFile(path.join(RESUME_UPLOAD_DIR, storedName), fileBuffer);
+
+  return {
+    resumeFileName: normalizedFileName,
+    resumeStoredName: storedName,
+    resumeMimeType: mimeType,
+    resumeUploadedAt: new Date(),
+  };
+};
+
 const sanitizeUser = (user) => {
   const plainUser = user.toObject ? user.toObject() : { ...user };
+  const resumePublicFields = buildResumePublicFields(plainUser);
   delete plainUser.passwordHash;
-  return plainUser;
+  delete plainUser.resumeStoredName;
+
+  return {
+    ...plainUser,
+    ...resumePublicFields,
+  };
 };
 
 const sanitizePublicUser = (user) => {
@@ -32,6 +193,11 @@ const sanitizePublicUser = (user) => {
     lastName: plainUser.lastName,
     profilePicture: plainUser.profilePicture,
     bio: plainUser.bio,
+    portfolioUrl: plainUser.portfolioUrl || '',
+    resumeFileName: plainUser.resumeFileName || '',
+    resumeMimeType: plainUser.resumeMimeType || '',
+    resumeUploadedAt: plainUser.resumeUploadedAt || null,
+    resumeDownloadUrl: plainUser.resumeDownloadUrl || '',
     countryId: plainUser.countryId,
     cityId: plainUser.cityId,
     languages: plainUser.languages || [],
@@ -132,6 +298,25 @@ const applyProfileUpdates = (currentUser, payload = {}) => {
     currentUser.bio = payload.bio;
   }
 
+  if (payload.portfolioUrl !== undefined) {
+    currentUser.portfolioUrl = payload.portfolioUrl.trim();
+  }
+
+  if (payload.email !== undefined) {
+    currentUser.email = payload.email.trim().toLowerCase();
+  }
+
+  if (payload.languages !== undefined) {
+    const normalizedLanguages = Array.isArray(payload.languages)
+      ? payload.languages
+      : String(payload.languages)
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+
+    currentUser.languages = normalizedLanguages;
+  }
+
   if (payload.avatar !== undefined) {
     currentUser.profilePicture = payload.avatar;
   }
@@ -145,9 +330,97 @@ const applyProfileUpdates = (currentUser, payload = {}) => {
   }
 };
 
+const applyLocationUpdates = async (currentUser, payload = {}) => {
+  if (payload.cityId === undefined) {
+    return;
+  }
+
+  const normalizedCityId = payload.cityId.trim();
+
+  if (!normalizedCityId) {
+    currentUser.cityId = '';
+    currentUser.countryId = '';
+    return;
+  }
+
+  const city = await City.findOne({
+    cityId: normalizedCityId,
+    isActive: true,
+  });
+
+  if (!city) {
+    throw new ApiError(400, 'Selected city is invalid', 'VALIDATION_ERROR');
+  }
+
+  const country = await Country.findOne({
+    countryId: city.countryId,
+    isActive: true,
+  });
+
+  if (!country || country.code !== ALGERIA_COUNTRY_CODE) {
+    throw new ApiError(
+      400,
+      'Only Algerian cities are available in this field',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  currentUser.cityId = city.cityId;
+  currentUser.countryId = city.countryId;
+};
+
+const applyResumeUpdates = async (currentUser, payload = {}) => {
+  const shouldRemoveResume = Boolean(payload.removeResume);
+  const normalizedResumeFileName = payload.resumeFileName?.trim() || '';
+  const normalizedResumeDataUrl = payload.resumeFileDataUrl?.trim() || '';
+  const hasNewResumeUpload = Boolean(normalizedResumeFileName && normalizedResumeDataUrl);
+  const hasPartialResumeUpload = Boolean(normalizedResumeFileName || normalizedResumeDataUrl);
+
+  if (hasPartialResumeUpload && !hasNewResumeUpload) {
+    throw new ApiError(400, 'Resume file data is incomplete', 'VALIDATION_ERROR');
+  }
+
+  if (!shouldRemoveResume && !hasNewResumeUpload) {
+    return;
+  }
+
+  const previousStoredName = currentUser.resumeStoredName || '';
+
+  if (hasNewResumeUpload) {
+    const uploadedResume = await saveResumeFile({
+      fileName: normalizedResumeFileName,
+      fileDataUrl: normalizedResumeDataUrl,
+    });
+
+    currentUser.resumeFileName = uploadedResume.resumeFileName;
+    currentUser.resumeStoredName = uploadedResume.resumeStoredName;
+    currentUser.resumeMimeType = uploadedResume.resumeMimeType;
+    currentUser.resumeUploadedAt = uploadedResume.resumeUploadedAt;
+
+    if (previousStoredName) {
+      await removeResumeFile(previousStoredName);
+    }
+
+    return;
+  }
+
+  if (shouldRemoveResume) {
+    currentUser.resumeFileName = '';
+    currentUser.resumeStoredName = '';
+    currentUser.resumeMimeType = '';
+    currentUser.resumeUploadedAt = undefined;
+
+    if (previousStoredName) {
+      await removeResumeFile(previousStoredName);
+    }
+  }
+};
+
 const updateCurrentUser = async (user, payload) => {
   const currentUser = ensureAuthenticatedUser(user);
   applyProfileUpdates(currentUser, payload);
+  await applyLocationUpdates(currentUser, payload);
+  await applyResumeUpdates(currentUser, payload);
 
   await currentUser.save();
 
@@ -185,10 +458,42 @@ const getUserById = async (id) => {
 
 const updateUserProfile = async (userId, updates = {}) => {
   const currentUser = await getUserDocumentById(userId, { activeOnly: true });
+
+  if (updates.email !== undefined) {
+    const normalizedEmail = updates.email.trim().toLowerCase();
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      userId: { $ne: currentUser.userId },
+    });
+
+    if (existingUser) {
+      throw new ApiError(409, 'Email already in use', 'EMAIL_ALREADY_EXISTS');
+    }
+  }
+
   applyProfileUpdates(currentUser, updates);
+  await applyLocationUpdates(currentUser, updates);
+  await applyResumeUpdates(currentUser, updates);
   await currentUser.save();
 
   return sanitizeUser(currentUser);
+};
+
+const listAlgerianCities = async () => {
+  const country = await ensureAlgeriaCountry();
+  const cities = await ensureAlgerianCities();
+
+  return {
+    country: {
+      id: country.countryId,
+      code: country.code,
+      name: country.name,
+    },
+    cities: cities.map((city) => ({
+      id: city.cityId,
+      label: city.name,
+    })),
+  };
 };
 
 const listUsers = async (query = {}) => {
@@ -368,6 +673,7 @@ module.exports = {
   getUserPublicProfile,
   getUserById,
   updateUserProfile,
+  listAlgerianCities,
   listUsers,
   searchUsers,
   addOfferedSkillToCurrentUser,
