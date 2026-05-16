@@ -6,6 +6,7 @@ const City = require('../models/City');
 const Country = require('../models/Country');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
+const { ensureLearnerCanOfferSkill } = require('./validation.service');
 const { ALGERIA_CITY_NAMES } = require('../constants/algeria-cities');
 
 const USER_ROLES = ['LEARNER', 'MENTOR', 'ADMIN'];
@@ -628,6 +629,8 @@ const removeSkillFromCurrentUser = async (user, fieldName, payload) => {
 };
 
 const addOfferedSkillToCurrentUser = async (user, payload) => {
+  const skillName = extractSkillName(payload);
+  await ensureLearnerCanOfferSkill(user.userId, skillName);
   return addSkillToCurrentUser(user, 'offeredSkills', payload);
 };
 

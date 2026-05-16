@@ -11,6 +11,7 @@ const projectRoutes = require('./project.routes');
 const ratingRoutes = require('./rating.routes');
 const sessionRoutes = require('./session.routes');
 const userRoutes = require('./user.routes');
+const validationRoutes = require('./validation.routes');
 
 router.use('/auth', authRoutes);
 router.use('/credits', creditRoutes);
@@ -22,6 +23,7 @@ router.use('/projects', projectRoutes);
 router.use('/ratings', ratingRoutes);
 router.use('/sessions', sessionRoutes);
 router.use('/users', userRoutes);
+router.use('/validation', validationRoutes);
 
 router.get('/', (req, res) => {
   res.json({ success: true, message: 'API v1 is running' });

@@ -13,6 +13,12 @@ const SkillCategory = require('../models/SkillCategory');
 const SkillEvidence = require('../models/SkillEvidence');
 const User = require('../models/User');
 const ValidationRequest = require('../models/ValidationRequest');
+const { getMentorValidationOverview } = require('./validation.service');
+const { ensureDefaultSkillCategory } = require('../utils/skillCategory.util');
+
+const MENTOR_ROLES = new Set(['MENTOR', 'ADMIN']);
+
+const isMentorUser = (user) => MENTOR_ROLES.has(String(user?.role || '').toUpperCase());
 
 const ensureAuthenticatedUser = (user) => {
   if (!user?.userId) {
@@ -350,12 +356,64 @@ const getOverview = async (currentUser) => {
     price: mentor.price,
   }));
 
-  return {
+  const baseOverview = {
     welcome: {
       firstName: user.firstName || 'Member',
       isFirstVisit: !user.lastLogin,
     },
+    role: isMentorUser(user) ? 'mentor' : 'learner',
     creditsAvailable: readDecimalValue(user.timeCredits),
+    upcomingSessions,
+    recommendedSkills,
+  };
+
+  if (isMentorUser(user)) {
+    const validationOverview = await getMentorValidationOverview(user.userId);
+
+    return {
+      ...baseOverview,
+      recommendedSkills: [],
+      validationOverview: validationOverview.summary,
+      pendingValidationRequests: validationOverview.recentPending,
+      recentValidationActivity: validationOverview.recentActivity,
+      stats: [
+        {
+          id: 'pending-validations',
+          label: 'Pending reviews',
+          value: String(validationOverview.summary.pending),
+          note: 'Awaiting your decision',
+          icon: 'validation-pending',
+        },
+        {
+          id: 'validated-skills',
+          label: 'Skills validated',
+          value: String(validationOverview.summary.validated),
+          note:
+            validationOverview.summary.validated > 0
+              ? `Avg score ${validationOverview.summary.averageValidationScore}/100`
+              : 'No validations yet',
+          icon: 'validation-approved',
+        },
+        {
+          id: 'rejected-validations',
+          label: 'Requests rejected',
+          value: String(validationOverview.summary.rejected),
+          note: 'Learners cannot teach these skills',
+          icon: 'validation-rejected',
+        },
+        {
+          id: 'total-validations',
+          label: 'Total requests',
+          value: String(validationOverview.summary.total),
+          note: `${completedSessions} sessions completed`,
+          icon: 'validation',
+        },
+      ],
+    };
+  }
+
+  return {
+    ...baseOverview,
     stats: [
       {
         id: 'credits',
@@ -386,8 +444,6 @@ const getOverview = async (currentUser) => {
         icon: 'validation',
       },
     ],
-    upcomingSessions,
-    recommendedSkills,
   };
 };
 
@@ -571,6 +627,8 @@ const getValidationData = async (currentUser) => {
       evidenceCount,
       hasExistingEvidence: evidenceCount > 0,
       requestStatus: activeRequest?.requestStatus || '',
+      validationStatus: skill.validationStatus || 'UNVALIDATED',
+      canTeach: skill.validationStatus === 'VALIDATED',
     };
   });
 
@@ -588,7 +646,11 @@ const getValidationData = async (currentUser) => {
     const activeRequest = skill.skillId ? requestMap.get(skill.skillId) : null;
     let status = 'ready';
 
-    if (activeRequest && ['PENDING', 'IN_REVIEW'].includes(activeRequest.requestStatus)) {
+    if (skill.validationStatus === 'VALIDATED') {
+      status = 'validated';
+    } else if (activeRequest?.requestStatus === 'REJECTED') {
+      status = 'rejected';
+    } else if (activeRequest && ['PENDING', 'IN_REVIEW'].includes(activeRequest.requestStatus)) {
       status = 'in_review';
     } else if (evidenceCount === 0) {
       status = 'missing_evidence';
@@ -600,6 +662,8 @@ const getValidationData = async (currentUser) => {
       category: skill.categoryName || 'General',
       level: toTitleCase(skill.proficiencyLevel),
       status,
+      validationScore: skill.validationScore || 0,
+      canTeach: skill.validationStatus === 'VALIDATED',
       endorsements: Math.max(0, Math.round((skill.validationScore || 0) / 20)),
       evidenceCount,
     };
@@ -726,15 +790,7 @@ const createValidationRequest = async (currentUser, payload = {}) => {
       throw new ApiError(404, 'Skill not found for the current user', 'SKILL_NOT_FOUND');
     }
 
-    const fallbackCategory = await SkillCategory.findOne({ isActive: true }).sort({ createdAt: 1 });
-
-    if (!fallbackCategory) {
-      throw new ApiError(
-        400,
-        'No active skill category is available to create the validation request',
-        'MISSING_SKILL_CATEGORY'
-      );
-    }
+    const fallbackCategory = await ensureDefaultSkillCategory();
 
     skill = await Skill.create({
       skillId: `SKILL-${randomUUID()}`,

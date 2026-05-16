@@ -5,6 +5,7 @@ const Session = require('../models/Session');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const creditService = require('./credit.service');
+const { ensureTeacherCanTeachSkill } = require('./validation.service');
 
 const SESSION_STATUSES = ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED'];
 const SESSION_ROLES = ['TEACHER', 'LEARNER'];
@@ -108,6 +109,7 @@ const requestSession = async (currentUser, payload) => {
   }
 
   await ensureTeacherExists(teacherId);
+  await ensureTeacherCanTeachSkill(teacherId, payload.skill);
 
   const session = await Session.create({
     sessionId: `SES-${randomUUID()}`,
