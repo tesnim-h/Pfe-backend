@@ -1,40 +1,34 @@
-const args = new Set(process.argv.slice(2));
-
-function printHelp() {
-  console.log('Usage: node scripts/seed.js [--reset] [--help]');
-  console.log('');
-  console.log('Options:');
-  console.log('  --reset  Delete seeded collections before inserting demo data');
-  console.log('  --help   Show this help message');
-  console.log('');
-  console.log(
-    'The script uses MONGODB_URI and an optional SEED_DEFAULT_PASSWORD from your environment.'
-  );
-}
-
-if (args.has('--help')) {
-  printHelp();
-  process.exit(0);
-}
-
-try {
-  require('dotenv').config();
-} catch (error) {
-  if (error.code !== 'MODULE_NOT_FOUND') {
-    throw error;
-  }
-}
-
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 
-const connectDB = require('../src/config/db');
-const seedHelper = require('../src/utils/seed.helper');
+const Admin = require('../models/Admin');
+const AuditLog = require('../models/AuditLog');
+const City = require('../models/City');
+const Conversation = require('../models/Conversation');
+const Country = require('../models/Country');
+const CreditBalance = require('../models/CreditBalance');
+const CreditTransaction = require('../models/CreditTransaction');
+const Learner = require('../models/Learner');
+const Mentor = require('../models/Mentor');
+const MentorApplication = require('../models/MentorApplication');
+const MentorCredential = require('../models/MentorCredential');
+const MentorSkill = require('../models/MentorSkill');
+const Message = require('../models/Message');
+const Notification = require('../models/Notification');
+const PlatformStatistics = require('../models/PlatformStatistics');
+const Session = require('../models/Session');
+const SessionRequest = require('../models/SessionRequest');
+const SessionReview = require('../models/SessionReview');
+const Skill = require('../models/Skill');
+const SkillCategory = require('../models/SkillCategory');
+const SkillEvidence = require('../models/SkillEvidence');
+const SystemSettings = require('../models/SystemSettings');
+const User = require('../models/User');
+const ValidationRequest = require('../models/ValidationRequest');
 
-const SHOULD_RESET = args.has('--reset');
+const DEFAULT_PASSWORD = process.env.SEED_DEFAULT_PASSWORD || 'Password123!';
 
-const decimal = (value) =>
-  mongoose.Types.Decimal128.fromString(String(value));
+const decimal = (value) => mongoose.Types.Decimal128.fromString(String(value));
 
 const baseDate = new Date('2026-04-20T09:00:00.000Z');
 
@@ -117,7 +111,7 @@ const ids = {
   stats: 'PLATFORM-STATISTICS-001',
 };
 
-const getSeedData = async () => {
+const buildSeedCollections = async () => {
   const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
 
   const countries = [
@@ -622,49 +616,11 @@ const getSeedData = async () => {
 
   const creditTransactions = [
     {
-      transactionId: ids.transactions.learnerInitial,
-      userId: ids.users.learner,
-      transactionType: 'INITIAL_ALLOCATION',
-      amount: 10,
-      description: 'Initial credit allocation for a new active learner.',
-      balanceBefore: 0,
-      balanceAfter: 10,
-      initiatedBy: ids.users.admin,
-      createdAt: at(-75),
-    },
-    {
-      transactionId: ids.transactions.mentorInitial,
-      userId: ids.users.mentor,
-      transactionType: 'INITIAL_ALLOCATION',
+      fromUser: ids.users.learner,
+      toUser: ids.users.mentor,
       amount: 6,
-      description: 'Initial credit allocation for a newly verified mentor.',
-      balanceBefore: 0,
-      balanceAfter: 6,
-      initiatedBy: ids.users.admin,
-      createdAt: at(-100),
-    },
-    {
-      transactionId: ids.transactions.learnerSpend,
-      userId: ids.users.learner,
-      relatedSessionId: ids.session,
-      transactionType: 'SPEND',
-      amount: 6,
-      description: 'Credits spent for the completed mentoring session.',
-      balanceBefore: 10,
-      balanceAfter: 4,
-      initiatedBy: ids.users.learner,
-      createdAt: at(-1, 8),
-    },
-    {
-      transactionId: ids.transactions.mentorEarn,
-      userId: ids.users.mentor,
-      relatedSessionId: ids.session,
-      transactionType: 'EARN',
-      amount: 6,
-      description: 'Credits earned from teaching a completed session.',
-      balanceBefore: 6,
-      balanceAfter: 12,
-      initiatedBy: ids.users.admin,
+      sessionId: ids.session,
+      type: 'TRANSFER',
       createdAt: at(-1, 8),
     },
   ];
@@ -849,7 +805,7 @@ const getSeedData = async () => {
     {
       name: 'credit transactions',
       model: CreditTransaction,
-      key: 'transactionId',
+      key: 'sessionId',
       docs: creditTransactions,
     },
     {
@@ -867,7 +823,7 @@ const getSeedData = async () => {
   ];
 };
 
-const upsertCollection = async ({ model, key, docs, name }) => {
+const upsertCollection = async ({ model, key, docs, name }, logger) => {
   const operations = docs.map((doc) => ({
     updateOne: {
       filter: { [key]: doc[key] },
@@ -877,23 +833,47 @@ const upsertCollection = async ({ model, key, docs, name }) => {
   }));
 
   await model.bulkWrite(operations, { ordered: true });
-  console.log(`Seeded ${docs.length} ${name}.`);
+  logger.log(`Seeded ${docs.length} ${name}.`);
 };
 
-const run = async () => {
-  if (!process.env.MONGODB_URI) {
-    throw new Error('MONGODB_URI is required to run the seed script.');
+const seedDatabase = async ({ reset = false, logger = console } = {}) => {
+  const collections = await buildSeedCollections();
+
+  if (reset) {
+    for (const collection of [...collections].reverse()) {
+      await collection.model.deleteMany({});
+      logger.log(`Cleared ${collection.name}.`);
+    }
   }
 
-  await connectDB();
-  await seedHelper.seedDatabase({ reset: SHOULD_RESET, logger: console });
+  for (const collection of collections) {
+    await upsertCollection(collection, logger);
+  }
+
+  logger.log('');
+  logger.log('Seed completed successfully.');
+  logger.log(`Default password: ${DEFAULT_PASSWORD}`);
+  logger.log('Demo accounts:');
+  logger.log('  admin@fenneky.dev');
+  logger.log('  mentor@fenneky.dev');
+  logger.log('  learner@fenneky.dev');
 };
 
-run()
-  .catch((error) => {
-    console.error('Seed failed:', error.message);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await mongoose.connection.close();
-  });
+const shouldSeedDatabase = async () => {
+  const collections = await buildSeedCollections();
+
+  for (const collection of collections) {
+    const currentCount = await collection.model.countDocuments();
+    if (currentCount < collection.docs.length) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+module.exports = {
+  seedDatabase,
+  shouldSeedDatabase,
+  DEFAULT_PASSWORD,
+};

@@ -10,9 +10,16 @@ const { signAccessToken } = require('../utils/jwt');
 const { generateResetToken, hashToken } = require('../utils/token');
 const { sanitizeUser } = require('./user.service');
 const sendEmail = require('../utils/email');
+const SystemSettings = require('../models/SystemSettings');
 const { DEFAULT_ADMIN_PERMISSIONS } = require('../constants/admin');
 
-const INITIAL_TIME_CREDITS = '10';
+const DEFAULT_INITIAL_TIME_CREDITS = '10';
+
+async function getInitialTimeCredits() {
+  const setting = await SystemSettings.findOne({ settingKey: 'initial_credit_allocation' });
+  const value = parseFloat(setting?.settingValue);
+  return (Number.isFinite(value) && value >= 0) ? String(value) : DEFAULT_INITIAL_TIME_CREDITS;
+}
 
 const buildAuthPayload = (user) => {
   return {
@@ -31,6 +38,8 @@ const register = async (payload) => {
     throw new ApiError(409, 'Email already in use', 'EMAIL_ALREADY_EXISTS');
   }
 
+  const initialCredits = await getInitialTimeCredits();
+
   const user = await User.create({
     userId: `USR-${randomUUID()}`,
     email: payload.email,
@@ -43,7 +52,7 @@ const register = async (payload) => {
     cityId: payload.cityId,
     languages: payload.languages || [],
     role: payload.role || 'LEARNER',
-    timeCredits: mongoose.Types.Decimal128.fromString(INITIAL_TIME_CREDITS),
+    timeCredits: mongoose.Types.Decimal128.fromString(initialCredits),
   });
 
   return buildAuthPayload(user);
@@ -152,6 +161,8 @@ const registerAdmin = async (payload, options = {}) => {
     throw new ApiError(409, 'Email already in use', 'EMAIL_ALREADY_EXISTS');
   }
 
+  const initialCredits = await getInitialTimeCredits();
+
   const user = await User.create({
     userId: `USR-${randomUUID()}`,
     email: payload.email,
@@ -166,7 +177,7 @@ const registerAdmin = async (payload, options = {}) => {
     role: 'ADMIN',
     accountStatus: 'ACTIVE',
     emailVerified: true,
-    timeCredits: mongoose.Types.Decimal128.fromString(INITIAL_TIME_CREDITS),
+    timeCredits: mongoose.Types.Decimal128.fromString(initialCredits),
   });
 
   await Admin.create({

@@ -2,7 +2,11 @@ const { randomUUID } = require('crypto');
 
 const Admin = require('../models/Admin');
 const AuditLog = require('../models/AuditLog');
+const CreditBalance = require('../models/CreditBalance');
+const CreditTransaction = require('../models/CreditTransaction');
+const MentorApplication = require('../models/MentorApplication');
 const Report = require('../models/Report');
+const Session = require('../models/Session');
 const SystemSettings = require('../models/SystemSettings');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
@@ -566,8 +570,18 @@ const getDashboard = async () => {
     totalMentors,
     pendingReports,
     reportsUnderReview,
+    reportedUserIds,
+    pendingMentorApplications,
     totalSettings,
     totalAuditEntries,
+    recentAuditLogs,
+    creditAggregation,
+    totalCreditTransactions,
+    totalSessions,
+    pendingSessions,
+    acceptedSessions,
+    completedSessions,
+    rejectedSessions,
   ] = await Promise.all([
     User.countDocuments({}),
     User.countDocuments({ accountStatus: 'ACTIVE' }),
@@ -578,9 +592,34 @@ const getDashboard = async () => {
     User.countDocuments({ role: 'MENTOR' }),
     Report.countDocuments({ reportStatus: 'PENDING' }),
     Report.countDocuments({ reportStatus: 'UNDER_REVIEW' }),
+    Report.distinct('reportedUserId', { reportStatus: { $in: ['PENDING', 'UNDER_REVIEW'] } }),
+    MentorApplication.countDocuments({ applicationStatus: 'PENDING' }),
     SystemSettings.countDocuments({}),
     AuditLog.countDocuments({}),
+    AuditLog.find({}).sort({ timestamp: -1 }).limit(10).lean(),
+    CreditBalance.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalInCirculation: { $sum: '$currentBalance' },
+          totalEarned: { $sum: '$totalEarned' },
+          totalSpent: { $sum: '$totalSpent' },
+        },
+      },
+    ]),
+    CreditTransaction.countDocuments({}),
+    Session.countDocuments({}),
+    Session.countDocuments({ status: 'PENDING' }),
+    Session.countDocuments({ status: 'ACCEPTED' }),
+    Session.countDocuments({ status: 'COMPLETED' }),
+    Session.countDocuments({ status: 'REJECTED' }),
   ]);
+
+  const creditStats = creditAggregation[0] || {
+    totalInCirculation: 0,
+    totalEarned: 0,
+    totalSpent: 0,
+  };
 
   return {
     users: {
@@ -595,10 +634,26 @@ const getDashboard = async () => {
     moderation: {
       pendingReports,
       reportsUnderReview,
+      reportedUsers: reportedUserIds.length,
+      pendingMentorApplications,
+    },
+    credits: {
+      totalInCirculation: creditStats.totalInCirculation,
+      totalEarned: creditStats.totalEarned,
+      totalSpent: creditStats.totalSpent,
+      totalTransactions: totalCreditTransactions,
+    },
+    sessions: {
+      total: totalSessions,
+      pending: pendingSessions,
+      accepted: acceptedSessions,
+      completed: completedSessions,
+      rejected: rejectedSessions,
     },
     system: {
       settingsCount: totalSettings,
       auditEntries: totalAuditEntries,
+      recentActivity: recentAuditLogs,
       supportedAdminPermissions: [...ADMIN_PERMISSION_KEYS],
     },
   };
