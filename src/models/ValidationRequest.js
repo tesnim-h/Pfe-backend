@@ -83,6 +83,11 @@ const validationRequestSchema = new mongoose.Schema(
   }
 );
 
+validationRequestSchema.index({ learnerUserId: 1 });
+validationRequestSchema.index({ mentorUserId: 1 });
+validationRequestSchema.index({ requestStatus: 1 });
+validationRequestSchema.index({ learnerUserId: 1, requestStatus: 1 });
+
 module.exports =
   mongoose.models.ValidationRequest ||
   mongoose.model('ValidationRequest', validationRequestSchema);

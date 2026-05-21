@@ -19,6 +19,15 @@ const listProjects = async (req, res, next) => {
   }
 };
 
+const listProjectCategories = async (req, res, next) => {
+  try {
+    const categories = await projectService.listProjectCategories();
+    res.status(200).json(new ApiResponse(200, categories, 'Project categories fetched successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 const listJoinRequests = async (req, res, next) => {
   try {
     const requests = await projectService.listJoinRequests(req.user, req.params.id);
@@ -115,6 +124,7 @@ const removeProjectMember = async (req, res, next) => {
 module.exports = {
   createProject,
   listProjects,
+  listProjectCategories,
   listJoinRequests,
   getProjectById,
   updateProject,

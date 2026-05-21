@@ -122,7 +122,7 @@ const buildGlobalSkillCatalog = async () => {
   const [skillDocs, mentorSkillDocs, users] = await Promise.all([
     Skill.find({}).lean(),
     MentorSkill.find({ isActive: true }).lean(),
-    User.find({ accountStatus: 'ACTIVE' }).lean(),
+    User.find({ accountStatus: 'ACTIVE' }).select('-profilePicture -xpHistory').lean(),
   ]);
 
   const categoryIds = uniqueStrings([
@@ -302,15 +302,14 @@ const buildSkillRecordsByUserId = async (userIds) => {
     return new Map();
   }
 
-  const skillDocs = await Skill.find({ userId: { $in: sanitizedUserIds } })
-    .sort({ validationStatus: 1, skillName: 1 })
-    .lean();
-  const categoryIds = uniqueStrings(skillDocs.map((skill) => skill.categoryId));
-  const categories = categoryIds.length
-    ? await SkillCategory.find({ categoryId: { $in: categoryIds } }).lean()
-    : [];
+  const [skillDocs, allCategories] = await Promise.all([
+    Skill.find({ userId: { $in: sanitizedUserIds } })
+      .sort({ validationStatus: 1, skillName: 1 })
+      .lean(),
+    SkillCategory.find({}).lean(),
+  ]);
   const categoryMap = new Map(
-    categories.map((category) => [category.categoryId, category.categoryName])
+    allCategories.map((category) => [category.categoryId, category.categoryName])
   );
 
   return new Map(
@@ -334,12 +333,14 @@ const getCombinedSkillNames = (user, skillRecords = []) => {
   ]);
 };
 
-const buildMentorDirectory = async (currentUserId) => {
-  const mentors = await User.find({
+const buildMentorDirectory = async (currentUserId, { limit = 0 } = {}) => {
+  const query = User.find({
     accountStatus: 'ACTIVE',
     role: 'MENTOR',
     ...(currentUserId ? { userId: { $ne: currentUserId } } : {}),
-  }).lean();
+  }).select('-profilePicture -xpHistory');
+  if (limit > 0) query.limit(limit);
+  const mentors = await query.lean();
 
   if (!mentors.length) {
     return [];
@@ -387,7 +388,7 @@ const buildProfileReviews = async (userId) => {
   }
 
   const authorIds = uniqueStrings(reviews.map((review) => review.fromUser));
-  const authors = await User.find({ userId: { $in: authorIds } }).lean();
+  const authors = await User.find({ userId: { $in: authorIds } }).select('-profilePicture -xpHistory').lean();
   const authorMap = new Map(authors.map((author) => [author.userId, author]));
 
   return reviews.map((review) => ({
@@ -423,17 +424,18 @@ const getOverview = async (currentUser) => {
       $or: [{ teacherId: user.userId }, { learnerId: user.userId }],
     })
       .sort({ date: 1, createdAt: -1 })
+      .limit(100)
       .lean(),
     buildRatingSummaryMap([user.userId]),
     buildSkillRecordsByUserId([user.userId]),
-    buildMentorDirectory(user.userId),
+    isMentorUser(user) ? Promise.resolve([]) : buildMentorDirectory(user.userId, { limit: 4 }),
   ]);
 
   const participantIds = uniqueStrings(
     sessions.flatMap((session) => [session.teacherId, session.learnerId])
   ).filter((userId) => userId !== user.userId);
   const participants = participantIds.length
-    ? await User.find({ userId: { $in: participantIds } }).lean()
+    ? await User.find({ userId: { $in: participantIds } }).select('-profilePicture -xpHistory').lean()
     : [];
   const participantMap = new Map(participants.map((participant) => [participant.userId, participant]));
 
@@ -571,26 +573,47 @@ const getOverview = async (currentUser) => {
 
 const getProfile = async (currentUser) => {
   const user = ensureAuthenticatedUser(currentUser);
-  const [skillMap, ratingSummaryMap, reviews, mentorApplications, locationLabelMap, activeRequests] =
-    await Promise.all([
-      buildSkillRecordsByUserId([user.userId]),
-      buildRatingSummaryMap([user.userId]),
-      buildProfileReviews(user.userId),
-      MentorApplication.find({ userId: user.userId }).lean(),
-      buildLocationLabelMap([user]),
-      ValidationRequest.find({ learnerUserId: user.userId }).lean(),
-    ]);
 
-  const skillRecords = skillMap.get(user.userId) || [];
-  const skillIds = skillRecords.map((skill) => skill.skillId);
-  const applicationIds = mentorApplications.map((application) => application.applicationId);
-  const [evidenceItems, credentialItems] = await Promise.all([
-    skillIds.length ? SkillEvidence.find({ skillId: { $in: skillIds } }).lean() : [],
-    applicationIds.length
-      ? MentorCredential.find({ applicationId: { $in: applicationIds } }).lean()
-      : [],
+  // Pipeline: kick off SkillEvidence / MentorCredential as soon as their
+  // direct dependencies resolve — don't stall waiting for unrelated queries.
+  const skillsAndEvidencePromise = buildSkillRecordsByUserId([user.userId]).then(
+    async (skillMap) => {
+      const skillRecords = skillMap.get(user.userId) || [];
+      const skillIds = skillRecords.map((skill) => skill.skillId);
+      const evidenceItems = skillIds.length
+        ? await SkillEvidence.find({ skillId: { $in: skillIds } }).lean()
+        : [];
+      return { skillMap, evidenceItems };
+    }
+  );
+
+  const credentialsPromise = MentorApplication.find({ userId: user.userId })
+    .lean()
+    .then(async (mentorApplications) => {
+      const applicationIds = mentorApplications.map((application) => application.applicationId);
+      const credentialItems = applicationIds.length
+        ? await MentorCredential.find({ applicationId: { $in: applicationIds } }).lean()
+        : [];
+      return { mentorApplications, credentialItems };
+    });
+
+  const [
+    { skillMap, evidenceItems },
+    ratingSummaryMap,
+    reviews,
+    { mentorApplications, credentialItems },
+    locationLabelMap,
+    activeRequests,
+  ] = await Promise.all([
+    skillsAndEvidencePromise,
+    buildRatingSummaryMap([user.userId]),
+    buildProfileReviews(user.userId),
+    credentialsPromise,
+    buildLocationLabelMap([user]),
+    ValidationRequest.find({ learnerUserId: user.userId }).lean(),
   ]);
 
+  const skillRecords = skillMap.get(user.userId) || [];
   const ratingSummary = ratingSummaryMap.get(user.userId) || {
     averageRating: 0,
     totalReviews: 0,

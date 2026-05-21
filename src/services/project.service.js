@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 
 const Project = require('../models/Project');
+const SkillCategory = require('../models/SkillCategory');
 const Notification = require('../models/Notification');
 const ApiError = require('../utils/ApiError');
 
@@ -89,6 +90,7 @@ const createProject = async (currentUser, payload) => {
     title: payload.title,
     description: payload.description || '',
     requiredSkill: payload.requiredSkill || '',
+    categoryId: payload.categoryId || '',
     status: payload.status || 'OPEN',
     members: [],
   });
@@ -104,6 +106,8 @@ const listProjects = async (query = {}) => {
   const page = parsePositiveInteger(query.page, 1, 'page');
   const limit = parsePositiveInteger(query.limit, 20, 'limit', 100);
 
+  const categoryId = query.categoryId?.trim();
+
   const filter = {};
 
   if (ownerId) {
@@ -112,6 +116,10 @@ const listProjects = async (query = {}) => {
 
   if (memberId) {
     filter['members.userId'] = memberId;
+  }
+
+  if (categoryId) {
+    filter.categoryId = categoryId;
   }
 
   if (status) {
@@ -178,6 +186,10 @@ const updateProject = async (currentUser, projectId, payload) => {
 
   if (payload.requiredSkill !== undefined) {
     project.requiredSkill = payload.requiredSkill;
+  }
+
+  if (payload.categoryId !== undefined) {
+    project.categoryId = payload.categoryId;
   }
 
   if (payload.status !== undefined) {
@@ -334,6 +346,10 @@ const removeProjectMember = async (currentUser, projectId, memberUserId) => {
   return sanitizeProject(project);
 };
 
+const listProjectCategories = async () => {
+  return SkillCategory.find({ isActive: true }).sort({ categoryName: 1 }).lean();
+};
+
 const listJoinRequests = async (currentUser, projectId) => {
   const user = ensureAuthenticatedUser(currentUser);
   const project = await getProjectDocumentById(projectId);
@@ -346,6 +362,7 @@ const listJoinRequests = async (currentUser, projectId) => {
 module.exports = {
   createProject,
   listProjects,
+  listProjectCategories,
   getProjectById,
   updateProject,
   deleteProject,

@@ -11,9 +11,10 @@ const sessionSchema = new mongoose.Schema(
       trim: true,
     },
     // Learner and teacher are linked by userId (string), not ObjectId.
+    // learnerId is empty for public open sessions (no learner until someone joins).
     learnerId: {
       type: String,
-      required: true,
+      default: '',
       trim: true,
       ref: 'User',
       index: true,
@@ -25,15 +26,27 @@ const sessionSchema = new mongoose.Schema(
       ref: 'User',
       index: true,
     },
+    // Human-readable session title (used for public sessions).
+    title: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     // Domain fields requested for session request lifecycle.
     skill: {
       type: String,
-      required: true,
+      default: '',
       trim: true,
+    },
+    categoryId: {
+      type: String,
+      trim: true,
+      ref: 'SkillCategory',
+      default: '',
     },
     duration: {
       type: Number,
-      required: true,
+      default: 1,
       min: 1,
     },
     date: {
@@ -43,6 +56,18 @@ const sessionSchema = new mongoose.Schema(
     message: {
       type: String,
       default: '',
+    },
+    // Google Meet link for public open sessions.
+    googleMeetLink: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    // Credits required to join this session (set by the host).
+    sessionCredits: {
+      type: Number,
+      min: 0,
+      default: 0,
     },
     actualDuration: {
       type: Number,
@@ -57,6 +82,13 @@ const sessionSchema = new mongoose.Schema(
       enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED'],
       uppercase: true,
       default: 'PENDING',
+      index: true,
+    },
+    // Links a join-request session back to the public session it was created for.
+    parentSessionId: {
+      type: String,
+      default: '',
+      trim: true,
       index: true,
     },
     // Marks whether credit transfer already ran for idempotency protection.
@@ -81,5 +113,10 @@ const sessionSchema = new mongoose.Schema(
     versionKey: false,
   }
 );
+
+sessionSchema.index({ learnerId: 1, date: -1 });
+sessionSchema.index({ teacherId: 1, date: -1 });
+sessionSchema.index({ learnerId: 1, status: 1 });
+sessionSchema.index({ teacherId: 1, status: 1 });
 
 module.exports = mongoose.models.Session || mongoose.model('Session', sessionSchema);

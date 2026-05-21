@@ -2,6 +2,17 @@ const sessionService = require('../services/session.service');
 const ApiResponse = require('../utils/ApiResponse');
 const { emitSessionUpdate } = require('../sockets/gateway');
 
+// POST /sessions/open
+const createPublicSession = async (req, res, next) => {
+  try {
+    const session = await sessionService.createPublicSession(req.user, req.body);
+    emitSessionUpdate(session);
+    res.status(201).json(new ApiResponse(201, session, 'Session created successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 // POST /sessions/request
 const requestSession = async (req, res, next) => {
   try {
@@ -97,7 +108,29 @@ const getTeacherDirectory = async (req, res, next) => {
   }
 };
 
+// POST /sessions/:id/join
+const joinPublicSession = async (req, res, next) => {
+  try {
+    const session = await sessionService.joinPublicSession(req.user, req.params.id);
+    res.status(201).json(new ApiResponse(201, session, 'Join request sent successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// GET /sessions/can-host
+const getCanHost = async (req, res, next) => {
+  try {
+    const result = await sessionService.canHostSession(req.user);
+    res.status(200).json(new ApiResponse(200, result, 'Can host status fetched'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
+  createPublicSession,
+  joinPublicSession,
   requestSession,
   listSessions,
   listSessionsDirectory,
@@ -107,4 +140,5 @@ module.exports = {
   deleteSession,
   completeSession,
   getTeacherDirectory,
+  getCanHost,
 };

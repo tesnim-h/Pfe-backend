@@ -78,4 +78,8 @@ const skillSchema = new mongoose.Schema(
   }
 );
 
+skillSchema.index({ userId: 1 });
+skillSchema.index({ validationStatus: 1 });
+skillSchema.index({ userId: 1, validationStatus: 1 });
+
 module.exports = mongoose.models.Skill || mongoose.model('Skill', skillSchema);

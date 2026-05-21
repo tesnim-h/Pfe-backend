@@ -73,7 +73,7 @@ const sanitizePublicUser = (user) => {
 const withPopulatedParticipants = async (sessions) => {
   const userIds = [...new Set(sessions.flatMap((session) => [session.teacherId, session.learnerId]))];
   const users = await User.find({ userId: { $in: userIds } })
-    .select('userId firstName lastName profilePicture role')
+    .select('userId firstName lastName role')
     .lean();
 
   const userMap = new Map(users.map((user) => [user.userId, user]));
@@ -101,6 +101,56 @@ const ensureTeacherExists = async (teacherId) => {
   return teacher;
 };
 
+const HOSTING_ROLES = new Set(['MENTOR', 'ADMIN', 'admin']);
+
+const assertCanHostSession = async (userId, role) => {
+  if (HOSTING_ROLES.has(role)) return;
+
+  const validatedSkill = await Skill.findOne({
+    userId,
+    validationStatus: 'VALIDATED',
+  }).lean();
+
+  if (!validatedSkill) {
+    throw new ApiError(
+      403,
+      'Only mentors or learners with a validated skill can create sessions',
+      'FORBIDDEN'
+    );
+  }
+};
+
+// Host creates a public open session that learners can browse and join.
+const createPublicSession = async (currentUser, payload) => {
+  const host = ensureAuthenticatedUser(currentUser);
+
+  await assertCanHostSession(host.userId, host.role);
+
+  const parsedCredits = Number(payload.sessionCredits);
+  const sessionCredits = Number.isFinite(parsedCredits) && parsedCredits >= 0 ? parsedCredits : 0;
+
+  const session = await Session.create({
+    sessionId: `SES-${randomUUID()}`,
+    teacherId: host.userId,
+    learnerId: '',
+    title: payload.title?.trim() || '',
+    skill: payload.title?.trim() || 'General',
+    categoryId: payload.categoryId || '',
+    duration: 1,
+    date: payload.date,
+    message: payload.description?.trim() || '',
+    googleMeetLink: payload.googleMeetLink?.trim() || '',
+    sessionCredits,
+    status: 'ACCEPTED',
+  });
+
+  const plain = session.toObject();
+
+  // Attach populated teacher so the frontend can display the name immediately.
+  const [populated] = await withPopulatedParticipants([plain]);
+  return populated;
+};
+
 // Learner opens a new request-like session in PENDING state.
 const requestSession = async (currentUser, payload) => {
   const learner = ensureAuthenticatedUser(currentUser);
@@ -118,6 +168,7 @@ const requestSession = async (currentUser, payload) => {
     learnerId: learner.userId,
     teacherId,
     skill: payload.skill,
+    categoryId: payload.categoryId || '',
     duration: payload.duration,
     date: payload.date,
     message: payload.message || '',
@@ -152,7 +203,7 @@ const listSessionsForUser = async (currentUser, query = {}) => {
     filter.status = status;
   }
 
-  const sessions = await Session.find(filter).sort({ date: -1, createdAt: -1 }).lean();
+  const sessions = await Session.find(filter).sort({ date: -1, createdAt: -1 }).limit(200).lean();
   return withPopulatedParticipants(sessions);
 };
 
@@ -170,7 +221,7 @@ const listSessionsDirectory = async (currentUser, query = {}) => {
     filter.status = status;
   }
 
-  const sessions = await Session.find(filter).sort({ date: -1, createdAt: -1 }).lean();
+  const sessions = await Session.find(filter).sort({ date: -1, createdAt: -1 }).limit(200).lean();
   return withPopulatedParticipants(sessions);
 };
 
@@ -367,7 +418,63 @@ const getTeacherDirectory = async (currentUser) => {
   }));
 };
 
+// Learner requests to join an existing public session (no skill-validation check needed).
+const joinPublicSession = async (currentUser, sessionId) => {
+  const learner = ensureAuthenticatedUser(currentUser);
+  const publicSession = await getSessionDocumentById(sessionId);
+
+  if (publicSession.teacherId === learner.userId) {
+    throw new ApiError(400, 'You cannot join your own session', 'VALIDATION_ERROR');
+  }
+
+  if (publicSession.status !== 'ACCEPTED') {
+    throw new ApiError(409, 'This session is not available to join', 'SESSION_INVALID_STATUS');
+  }
+
+  const existing = await Session.findOne({
+    parentSessionId: sessionId,
+    learnerId: learner.userId,
+    status: { $in: ['PENDING', 'ACCEPTED'] },
+  }).lean();
+
+  if (existing) {
+    throw new ApiError(409, 'You already have an active request for this session', 'DUPLICATE_REQUEST');
+  }
+
+  const session = await Session.create({
+    sessionId: `SES-${randomUUID()}`,
+    learnerId: learner.userId,
+    teacherId: publicSession.teacherId,
+    parentSessionId: sessionId,
+    skill: publicSession.skill || publicSession.title || '',
+    categoryId: publicSession.categoryId || '',
+    duration: publicSession.duration || 1,
+    date: publicSession.date,
+    message: `Join request for: ${publicSession.title || publicSession.skill || 'session'}`,
+    status: 'PENDING',
+  });
+
+  return session.toObject();
+};
+
+const canHostSession = async (currentUser) => {
+  const user = ensureAuthenticatedUser(currentUser);
+
+  if (HOSTING_ROLES.has(user.role)) {
+    return { canHost: true };
+  }
+
+  const validatedSkill = await Skill.findOne({
+    userId: user.userId,
+    validationStatus: 'VALIDATED',
+  }).lean();
+
+  return { canHost: Boolean(validatedSkill) };
+};
+
 module.exports = {
+  createPublicSession,
+  joinPublicSession,
   requestSession,
   listSessionsForUser,
   listSessionsDirectory,
@@ -377,4 +484,5 @@ module.exports = {
   deleteSession,
   completeSession,
   getTeacherDirectory,
+  canHostSession,
 };

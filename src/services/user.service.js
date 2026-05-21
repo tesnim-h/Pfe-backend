@@ -423,7 +423,6 @@ const updateCurrentUser = async (user, payload) => {
   applyProfileUpdates(currentUser, payload);
   await applyLocationUpdates(currentUser, payload);
   await applyResumeUpdates(currentUser, payload);
-
   await currentUser.save();
 
   return sanitizeUser(currentUser);
@@ -569,6 +568,7 @@ const listUsers = async (query = {}) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
+      .select('-profilePicture -xpHistory')
       .lean(),
     User.countDocuments(filter),
   ]);

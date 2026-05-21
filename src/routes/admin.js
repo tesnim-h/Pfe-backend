@@ -1,10 +1,12 @@
 const express = require('express');
 
 const adminController = require('../controllers/adminController');
+const adminSkillsController = require('../controllers/adminSkills.controller');
 const requireAdminPermissions = require('../middleware/admin-permissions.middleware');
 const protect = require('../middleware/auth.middleware');
 const authorizeRoles = require('../middleware/authorize');
 const validate = require('../middleware/validate.middleware');
+const mentorApplicationController = require('../controllers/mentorApplication.controller');
 const {
   updatePermissionsSchema,
   updateReportSchema,
@@ -13,6 +15,12 @@ const {
   updateStatusSchema,
   updateUserByAdminSchema,
 } = require('../validators/admin.validator');
+const {
+  createCategorySchema,
+  updateCategorySchema,
+  createSkillDefinitionSchema,
+  updateSkillDefinitionSchema,
+} = require('../validators/admin-skills.validator');
 
 const router = express.Router();
 
@@ -61,6 +69,66 @@ router.patch(
   requireAdminPermissions('moderate_users'),
   validate(updateStatusSchema),
   adminController.updateUserStatus
+);
+
+// Skill categories
+router.get(
+  '/skills/categories',
+  requireAdminPermissions('manage_categories'),
+  adminSkillsController.listCategories
+);
+router.post(
+  '/skills/categories',
+  requireAdminPermissions('manage_categories'),
+  validate(createCategorySchema),
+  adminSkillsController.createCategory
+);
+router.put(
+  '/skills/categories/:id',
+  requireAdminPermissions('manage_categories'),
+  validate(updateCategorySchema),
+  adminSkillsController.updateCategory
+);
+router.delete(
+  '/skills/categories/:id',
+  requireAdminPermissions('manage_categories'),
+  adminSkillsController.deleteCategory
+);
+
+// Skill definitions
+router.get(
+  '/skills/definitions',
+  requireAdminPermissions('manage_categories'),
+  adminSkillsController.listSkillDefinitions
+);
+router.post(
+  '/skills/definitions',
+  requireAdminPermissions('manage_categories'),
+  validate(createSkillDefinitionSchema),
+  adminSkillsController.createSkillDefinition
+);
+router.put(
+  '/skills/definitions/:id',
+  requireAdminPermissions('manage_categories'),
+  validate(updateSkillDefinitionSchema),
+  adminSkillsController.updateSkillDefinition
+);
+router.delete(
+  '/skills/definitions/:id',
+  requireAdminPermissions('manage_categories'),
+  adminSkillsController.deleteSkillDefinition
+);
+
+// Mentor applications
+router.get(
+  '/mentor-applications',
+  requireAdminPermissions('verify_mentors'),
+  mentorApplicationController.listApplications
+);
+router.patch(
+  '/mentor-applications/:id/review',
+  requireAdminPermissions('verify_mentors'),
+  mentorApplicationController.reviewApplication
 );
 
 module.exports = router;

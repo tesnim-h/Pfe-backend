@@ -33,6 +33,12 @@ const projectSchema = new mongoose.Schema(
       trim: true,
       ref: 'User',
     },
+    categoryId: {
+      type: String,
+      trim: true,
+      ref: 'SkillCategory',
+      default: '',
+    },
     title: {
       type: String,
       required: true,
@@ -89,6 +95,7 @@ const projectSchema = new mongoose.Schema(
 );
 
 projectSchema.index({ ownerId: 1, createdAt: -1 });
+projectSchema.index({ categoryId: 1, createdAt: -1 });
 projectSchema.index({ status: 1, createdAt: -1 });
 projectSchema.index({ 'members.userId': 1 });
 projectSchema.index({ 'joinRequests.userId': 1 });

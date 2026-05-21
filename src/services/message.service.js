@@ -181,7 +181,7 @@ const listConversations = async (currentUser) => {
   )];
 
   const [participants, lastMessages, unreadCounts] = await Promise.all([
-    User.find({ userId: { $in: otherParticipantIds } }).lean(),
+    User.find({ userId: { $in: otherParticipantIds } }).select('-profilePicture').lean(),
     Message.aggregate([
       {
         $match: {

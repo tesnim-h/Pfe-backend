@@ -81,7 +81,7 @@ const userSchema = new mongoose.Schema({
   role: {
     type: String,
     enum: ['user', 'admin', 'LEARNER', 'MENTOR', 'ADMIN'],
-    default: 'user',
+    default: 'LEARNER',
   },
   accountStatus: {
     type: String,
@@ -144,5 +144,9 @@ const userSchema = new mongoose.Schema({
   },
 
 });
+
+userSchema.index({ accountStatus: 1 });
+userSchema.index({ role: 1 });
+userSchema.index({ accountStatus: 1, role: 1 });
 
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);

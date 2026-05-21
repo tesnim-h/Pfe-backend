@@ -309,7 +309,7 @@ const listUsers = async (query = {}) => {
   const filter = buildUserSearchFilter(query);
 
   const [items, total] = await Promise.all([
-    User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).select('-profilePicture'),
     User.countDocuments(filter),
   ]);
 
