@@ -7,6 +7,11 @@ const protect = require('../middleware/auth.middleware');
 const authorizeRoles = require('../middleware/authorize');
 const validate = require('../middleware/validate.middleware');
 const mentorApplicationController = require('../controllers/mentorApplication.controller');
+const mentoringRequestController = require('../controllers/mentoringRequest.controller');
+const {
+  approveMentoringRequestSchema,
+  rejectMentoringRequestSchema,
+} = require('../validators/mentoringRequest.validator');
 const {
   updatePermissionsSchema,
   updateReportSchema,
@@ -129,6 +134,25 @@ router.patch(
   '/mentor-applications/:id/review',
   requireAdminPermissions('verify_mentors'),
   mentorApplicationController.reviewApplication
+);
+
+// Mentoring requests
+router.get(
+  '/mentoring-requests',
+  requireAdminPermissions('verify_mentors'),
+  mentoringRequestController.listRequests
+);
+router.patch(
+  '/mentoring-requests/:id/approve',
+  requireAdminPermissions('verify_mentors'),
+  validate(approveMentoringRequestSchema),
+  mentoringRequestController.approveRequest
+);
+router.patch(
+  '/mentoring-requests/:id/reject',
+  requireAdminPermissions('verify_mentors'),
+  validate(rejectMentoringRequestSchema),
+  mentoringRequestController.rejectRequest
 );
 
 module.exports = router;

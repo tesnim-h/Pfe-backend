@@ -8,7 +8,7 @@ const CreditBalance = require('../models/CreditBalance');
 const ApiError = require('../utils/ApiError');
 const { hashPassword, comparePassword } = require('../utils/hash');
 const { signAccessToken } = require('../utils/jwt');
-const { generateResetToken, hashToken } = require('../utils/token');
+const { generateOtp, hashOtp } = require('../utils/token');
 const { sanitizeUser } = require('./user.service');
 const sendEmail = require('../utils/email');
 const SystemSettings = require('../models/SystemSettings');
@@ -105,40 +105,33 @@ const login = async ({ email, password }) => {
 
 const forgotPassword = async (email) => {
   const user = await User.findOne({ email });
-  const genericMessage = 'If that email exists, a reset link has been sent.';
+  const genericMessage = 'If that email exists, a verification code has been sent.';
 
-  // Return a generic message regardless of whether the email exists.
-  // Revealing whether an email is registered is an enumeration vulnerability.
   if (!user) {
     return { message: genericMessage };
   }
 
-  const { plainToken, hashedToken, expires } = generateResetToken();
+  const { code, hashedCode, expires } = generateOtp();
 
-  user.passwordResetToken = hashedToken;
+  user.passwordResetToken = hashedCode;
   user.passwordResetExpires = expires;
   await user.save({ validateBeforeSave: false });
-
-  const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${plainToken}`;
 
   try {
     const emailResult = await sendEmail({
       to: user.email,
-      subject: 'Password Reset Request',
-      text: `You requested a password reset. This link expires in 10 minutes:\n\n${resetUrl}\n\nIf you did not request this, ignore this email.`,
+      subject: 'Your Password Reset Code',
+      text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, ignore this email.`,
     });
 
     if (emailResult?.delivery === 'console') {
       return {
-        message:
-          'SMTP is not configured in development. The reset link was generated locally and printed in the backend console.',
-        debugResetUrl: resetUrl,
+        message: 'SMTP is not configured in development. The verification code was printed in the backend console.',
+        debugCode: code,
       };
     }
   } catch (emailError) {
     console.error('[EMAIL ERROR]', emailError.message);
-    // Roll back the token so the user can retry - a dangling token with no
-    // delivered email would lock them out until it expires.
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await user.save({ validateBeforeSave: false });
@@ -148,19 +141,19 @@ const forgotPassword = async (email) => {
   return { message: genericMessage };
 };
 
-const resetPassword = async (plainToken, newPassword) => {
-  const hashedToken = hashToken(plainToken);
+const resetPassword = async (email, code, newPassword) => {
+  const hashedCode = hashOtp(code);
 
   const user = await User.findOne({
-    passwordResetToken: hashedToken,
+    email,
+    passwordResetToken: hashedCode,
     passwordResetExpires: { $gt: Date.now() },
   }).select('+passwordResetToken +passwordResetExpires');
 
   if (!user) {
-    throw new ApiError(400, 'Invalid or expired token', 'INVALID_RESET_TOKEN');
+    throw new ApiError(400, 'Invalid or expired code', 'INVALID_RESET_CODE');
   }
 
-  // Hash manually - the model has no pre-save hook; this mirrors how register() works.
   user.passwordHash = await hashPassword(newPassword);
   user.passwordResetToken = undefined;
   user.passwordResetExpires = undefined;

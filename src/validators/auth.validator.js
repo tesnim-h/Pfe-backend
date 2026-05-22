@@ -43,6 +43,12 @@ const forgotPasswordSchema = Joi.object({
 });
 
 const resetPasswordSchema = Joi.object({
+  email: Joi.string().email().trim().lowercase().required(),
+  code: Joi.string().length(6).pattern(/^\d{6}$/).required().messages({
+    'string.length': 'Verification code must be 6 digits',
+    'string.pattern.base': 'Verification code must contain only digits',
+    'any.required': 'Verification code is required',
+  }),
   password: Joi.string()
     .min(8)
     .pattern(/[A-Z]/, 'uppercase letter')

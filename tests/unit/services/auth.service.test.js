@@ -25,8 +25,8 @@ jest.mock('../../../src/utils/jwt', () => ({
 }));
 
 jest.mock('../../../src/utils/token', () => ({
-  generateResetToken: jest.fn(),
-  hashToken: jest.fn(),
+  generateOtp: jest.fn(),
+  hashOtp: jest.fn(),
 }));
 
 jest.mock('../../../src/utils/email', () => jest.fn());
@@ -36,7 +36,7 @@ const CreditBalance = require('../../../src/models/CreditBalance');
 const SystemSettings = require('../../../src/models/SystemSettings');
 const { hashPassword } = require('../../../src/utils/hash');
 const { signAccessToken } = require('../../../src/utils/jwt');
-const { generateResetToken } = require('../../../src/utils/token');
+const { generateOtp } = require('../../../src/utils/token');
 const sendEmail = require('../../../src/utils/email');
 const authService = require('../../../src/services/auth.service');
 
@@ -107,21 +107,21 @@ describe('auth.service', () => {
       const result = await authService.forgotPassword('missing@example.com');
 
       expect(result).toEqual({
-        message: 'If that email exists, a reset link has been sent.',
+        message: 'If that email exists, a verification code has been sent.',
       });
       expect(sendEmail).not.toHaveBeenCalled();
     });
 
-    it('returns a debug reset URL when SMTP is not configured in development', async () => {
+    it('returns a debug code when SMTP is not configured in development', async () => {
       const userDoc = {
         email: 'member@example.com',
         save: jest.fn().mockResolvedValue(undefined),
       };
 
       User.findOne.mockResolvedValue(userDoc);
-      generateResetToken.mockReturnValue({
-        plainToken: 'plain-reset-token',
-        hashedToken: 'hashed-reset-token',
+      generateOtp.mockReturnValue({
+        code: '123456',
+        hashedCode: 'hashed-otp-code',
         expires: new Date('2030-01-01T00:00:00.000Z'),
       });
       sendEmail.mockResolvedValue({ delivery: 'console' });
@@ -132,16 +132,13 @@ describe('auth.service', () => {
       expect(sendEmail).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'member@example.com',
-          subject: 'Password Reset Request',
-          text: expect.stringContaining(
-            'http://localhost:3000/reset-password?token=plain-reset-token'
-          ),
+          subject: 'Your Password Reset Code',
+          text: expect.stringContaining('123456'),
         })
       );
       expect(result).toEqual({
-        message:
-          'SMTP is not configured in development. The reset link was generated locally and printed in the backend console.',
-        debugResetUrl: 'http://localhost:3000/reset-password?token=plain-reset-token',
+        message: 'SMTP is not configured in development. The verification code was printed in the backend console.',
+        debugCode: '123456',
       });
     });
   });
