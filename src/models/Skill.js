@@ -64,6 +64,54 @@ const skillSchema = new mongoose.Schema(
     validatedAt: {
       type: Date,
     },
+    // Skill Tier — mentor-assigned during validation. Drives S multiplier in Credits = T × S × M.
+    skillTier: {
+      type: String,
+      enum: ['STARTER', 'BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'],
+      uppercase: true,
+      default: 'STARTER',
+    },
+    skillTierMultiplier: {
+      type: Number,
+      default: 1.0,
+      min: 1.0,
+    },
+    // Trust Score — per-skill reputation signal (0–100). Formula: round(0.55×P + 0.45×E).
+    trustScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    trustBadge: {
+      type: String,
+      enum: ['UNVERIFIED', 'BRONZE', 'SILVER', 'GOLD', 'VERIFIED'],
+      uppercase: true,
+      default: 'UNVERIFIED',
+    },
+    // M modifier applied in Credits = T × S × M (derived from trustBadge).
+    trustModifier: {
+      type: Number,
+      default: 1.0,
+      min: 1.0,
+    },
+    portfolioScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    endorsementScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    endorsementCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     createdAt: {
       type: Date,
       default: Date.now,

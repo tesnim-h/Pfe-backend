@@ -682,8 +682,21 @@ const listReports = async (query = {}) => {
     Report.countDocuments(filter),
   ]);
 
+  const plainItems = items.map(toPlainObject);
+  const userIds = [...new Set(plainItems.flatMap((r) => [r.reportedUserId, r.reporterUserId]).filter(Boolean))];
+  const userRecords = userIds.length
+    ? await User.find({ userId: { $in: userIds } }).select('userId firstName lastName').lean()
+    : [];
+  const nameMap = Object.fromEntries(
+    userRecords.map((u) => [u.userId, [u.firstName, u.lastName].filter(Boolean).join(' ') || u.userId])
+  );
+
   return {
-    items: items.map(toPlainObject),
+    items: plainItems.map((r) => ({
+      ...r,
+      reportedUserName: nameMap[r.reportedUserId] || r.reportedUserId || '—',
+      reporterUserName: nameMap[r.reporterUserId] || r.reporterUserId || '—',
+    })),
     pagination: {
       page,
       limit,

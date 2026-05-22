@@ -136,12 +136,31 @@ const userSchema = new mongoose.Schema({
   lastXpGainAt: {
     type: Date,
   },
-  passwordResetToken: { 
-    type: String, select: false 
+  passwordResetToken: {
+    type: String, select: false
   },
-  passwordResetExpires: { 
-    type: Date, select: false 
+  passwordResetExpires: {
+    type: Date, select: false
   },
+
+  // Gamification — earned badges (permanent, public).
+  badges: {
+    type: [
+      {
+        key: { type: String, required: true, trim: true },
+        awardedAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+    _id: false,
+  },
+
+  // Streak system — consecutive days of qualifying activity.
+  currentStreak:    { type: Number, default: 0, min: 0 },
+  longestStreak:    { type: Number, default: 0, min: 0 },
+  lastActivityDate: { type: Date, default: null },
+  // Streak shield: once per calendar month, one missed day does not break the streak.
+  streakShieldUsedAt: { type: Date, default: null },
 
 });
 

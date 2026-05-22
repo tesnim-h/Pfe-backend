@@ -87,12 +87,23 @@ const deleteSession = async (req, res, next) => {
   }
 };
 
-// PATCH /sessions/:id/complete
+// PATCH /sessions/:id/complete — teacher marks session done; awaits learner confirmation.
 const completeSession = async (req, res, next) => {
   try {
     const session = await sessionService.completeSession(req.user, req.params.id, req.body);
     emitSessionUpdate(session);
-    res.status(200).json(new ApiResponse(200, session, 'Session completed successfully'));
+    res.status(200).json(new ApiResponse(200, session, 'Session marked complete — awaiting learner confirmation'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+// PATCH /sessions/:id/confirm — learner confirms; triggers atomic credit transfer + XP.
+const confirmCompletion = async (req, res, next) => {
+  try {
+    const session = await sessionService.confirmCompletion(req.user, req.params.id);
+    emitSessionUpdate(session);
+    res.status(200).json(new ApiResponse(200, session, 'Session confirmed — credits transferred successfully'));
   } catch (error) {
     next(error);
   }
@@ -139,6 +150,7 @@ module.exports = {
   cancelSession,
   deleteSession,
   completeSession,
+  confirmCompletion,
   getTeacherDirectory,
   getCanHost,
 };

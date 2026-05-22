@@ -25,5 +25,6 @@ router.patch('/:id/cancel', sessionController.cancelSession);
 router.post('/:id/join', sessionController.joinPublicSession);
 router.delete('/:id', sessionController.deleteSession);
 router.patch('/:id/complete', validate(completeSessionSchema), sessionController.completeSession);
+router.patch('/:id/confirm', sessionController.confirmCompletion);
 
 module.exports = router;

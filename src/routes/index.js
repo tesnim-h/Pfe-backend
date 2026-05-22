@@ -15,6 +15,9 @@ const mentorApplicationRoutes = require('./mentorApplication.routes');
 const mentoringRequestRoutes = require('./mentoringRequest.routes');
 const validationRoutes = require('./validation.routes');
 const xpRoutes = require('./xp.routes');
+const trustRoutes = require('./trust.routes');
+const challengeRoutes = require('./challenge.routes');
+const leaderboardRoutes = require('./leaderboard.routes');
 
 router.use('/auth', authRoutes);
 router.use('/credits', creditRoutes);
@@ -30,6 +33,9 @@ router.use('/sessions', sessionRoutes);
 router.use('/users', userRoutes);
 router.use('/validation', validationRoutes);
 router.use('/xp', xpRoutes);
+router.use('/trust', trustRoutes);
+router.use('/challenges', challengeRoutes);
+router.use('/leaderboard', leaderboardRoutes);
 
 router.get('/', (req, res) => {
   res.json({ success: true, message: 'API v1 is running' });

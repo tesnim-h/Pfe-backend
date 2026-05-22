@@ -79,7 +79,8 @@ const sessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED'],
+      // AWAITING_CONFIRMATION: teacher marked done, waiting for learner to confirm before credits transfer.
+      enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'AWAITING_CONFIRMATION', 'COMPLETED'],
       uppercase: true,
       default: 'PENDING',
       index: true,
@@ -100,6 +101,30 @@ const sessionSchema = new mongoose.Schema(
     xpAwarded: {
       type: Boolean,
       default: false,
+    },
+    // Two-sided confirmation: teacher marks done first, learner confirms before credits transfer.
+    teacherCompleted: {
+      type: Boolean,
+      default: false,
+    },
+    learnerConfirmed: {
+      type: Boolean,
+      default: false,
+    },
+    // Snapshot of S and M at completion time (audit trail for Credits = T × S × M).
+    skillTierMultiplier: {
+      type: Number,
+      default: 1.0,
+    },
+    trustModifier: {
+      type: Number,
+      default: 1.0,
+    },
+    // Human-readable formula captured at completion: "T=2h S=×1.5 M=×1.20 credits=3.60"
+    creditFormula: {
+      type: String,
+      default: '',
+      trim: true,
     },
     completedAt: {
       type: Date,

@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 
 const AuditLog = require('../models/AuditLog');
+const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 
 const parsePositiveInteger = (value, fallback, fieldName, max = Number.MAX_SAFE_INTEGER) => {
@@ -83,8 +84,21 @@ const listAuditLogs = async (query = {}) => {
     AuditLog.countDocuments(filter),
   ]);
 
+  const plainItems = items.map(toPlainObject);
+  const userIds = [...new Set(plainItems.flatMap((i) => [i.adminUserId, i.userId]).filter(Boolean))];
+  const userRecords = userIds.length
+    ? await User.find({ userId: { $in: userIds } }).select('userId firstName lastName').lean()
+    : [];
+  const nameMap = Object.fromEntries(
+    userRecords.map((u) => [u.userId, [u.firstName, u.lastName].filter(Boolean).join(' ') || u.userId])
+  );
+
   return {
-    items: items.map(toPlainObject),
+    items: plainItems.map((i) => ({
+      ...i,
+      adminName: nameMap[i.adminUserId] || i.adminUserId || '—',
+      targetUserName: nameMap[i.userId] || i.userId || '',
+    })),
     pagination: {
       page,
       limit,

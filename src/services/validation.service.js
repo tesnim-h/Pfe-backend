@@ -7,6 +7,8 @@ const Skill = require('../models/Skill');
 const SkillEvidence = require('../models/SkillEvidence');
 const User = require('../models/User');
 const ValidationRequest = require('../models/ValidationRequest');
+const { SKILL_TIER_NAMES, DEFAULT_SKILL_TIER, getSkillTierMultiplier } = require('../constants/trust');
+const trustService = require('./trust.service');
 
 const OPEN_REQUEST_STATUSES = ['PENDING', 'IN_REVIEW'];
 const MENTOR_ROLES = new Set(['MENTOR', 'ADMIN']);
@@ -243,6 +245,11 @@ const acceptValidationRequest = async (currentUser, requestId, payload = {}) => 
     throw new ApiError(400, 'validationScore must be between 0 and 100', 'VALIDATION_ERROR');
   }
 
+  // Mentor assigns the Skill Tier (S multiplier). Defaults to STARTER if omitted.
+  const rawTier = String(payload.skillTier || DEFAULT_SKILL_TIER).trim().toUpperCase();
+  const skillTier = SKILL_TIER_NAMES.includes(rawTier) ? rawTier : DEFAULT_SKILL_TIER;
+  const skillTierMultiplier = getSkillTierMultiplier(skillTier);
+
   const request = await getValidationRequestForMentor(mentor.userId, normalizedRequestId);
 
   if (!OPEN_REQUEST_STATUSES.includes(request.requestStatus)) {
@@ -277,10 +284,16 @@ const acceptValidationRequest = async (currentUser, requestId, payload = {}) => 
   skill.validatedBy = mentor.userId;
   skill.validatedAt = new Date();
   skill.lastUpdated = new Date();
+  // Mentor-assigned tier drives S multiplier in Credits = T × S × M.
+  skill.skillTier = skillTier;
+  skill.skillTierMultiplier = skillTierMultiplier;
 
   learner.offeredSkills = addSkillName(learner.offeredSkills, skill.skillName);
 
   await Promise.all([request.save(), skill.save(), learner.save()]);
+
+  // Recompute trust score now that the skill is validated (portfolio evidence is now evaluated).
+  await trustService.recomputeSkillTrust(learner.userId, skill.skillId);
 
   await Notification.create({
     notificationId: `NOTIF-${randomUUID()}`,
@@ -297,6 +310,8 @@ const acceptValidationRequest = async (currentUser, requestId, payload = {}) => 
     validationScore: request.validationScore,
     skillId: skill.skillId,
     skillName: skill.skillName,
+    skillTier,
+    skillTierMultiplier,
     canTeach: true,
     respondedAt: request.respondedAt,
   };

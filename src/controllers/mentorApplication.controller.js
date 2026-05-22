@@ -4,7 +4,7 @@ const ApiResponse = require('../utils/ApiResponse');
 // POST /mentor-applications
 const submit = async (req, res, next) => {
   try {
-    const application = await mentorApplicationService.submitMentorApplication(req.user);
+    const application = await mentorApplicationService.submitMentorApplication(req.user, req.body);
     res.status(201).json(new ApiResponse(201, application, 'Mentorship application submitted'));
   } catch (error) {
     next(error);

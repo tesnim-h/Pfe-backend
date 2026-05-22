@@ -1,15 +1,24 @@
 const mongoose = require('mongoose');
 const { randomUUID } = require('crypto');
 
+const CreditTransaction = require('../models/CreditTransaction');
+const MentorSkill = require('../models/MentorSkill');
 const Session = require('../models/Session');
 const Skill = require('../models/Skill');
 const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
 const creditService = require('./credit.service');
 const xpService = require('./xp.service');
+const badgeService = require('./badge.service');
+const streakService = require('./streak.service');
 const { ensureTeacherCanTeachSkill } = require('./validation.service');
+const {
+  MAX_SESSION_HOURS,
+  PROBATION_WEEKLY_CAP_CR,
+  PROBATION_BADGE,
+} = require('../constants/trust');
 
-const SESSION_STATUSES = ['PENDING', 'ACCEPTED', 'REJECTED', 'COMPLETED'];
+const SESSION_STATUSES = ['PENDING', 'ACCEPTED', 'REJECTED', 'AWAITING_CONFIRMATION', 'COMPLETED'];
 const SESSION_ROLES = ['TEACHER', 'LEARNER'];
 
 // Guards every service action that depends on req.user.
@@ -45,13 +54,77 @@ const parsePositiveDuration = (value, fieldName) => {
   return parsed;
 };
 
-const resolveCompletionDurations = (scheduledDuration, rawActualDuration) => {
-  const actualDuration = parsePositiveDuration(rawActualDuration, 'actualDuration') ?? scheduledDuration;
+// Looks up the teacher's skill tier multiplier (S) and trust modifier (M) for Credits = T × S × M.
+// Falls back to 1.0 × 1.0 if skill is not found (e.g. mentor hosting a general session).
+const resolveSkillModifiers = async (teacherId, skillName) => {
+  if (!skillName?.trim()) {
+    return { skillTierMultiplier: 1.0, trustModifier: 1.0 };
+  }
+
+  const skill = await Skill.findOne({
+    userId: teacherId,
+    skillName: new RegExp(`^${skillName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+    validationStatus: 'VALIDATED',
+  }).lean();
 
   return {
-    actualDuration,
-    chargedCredits: Math.min(scheduledDuration, actualDuration),
+    skillTierMultiplier: skill?.skillTierMultiplier ?? 1.0,
+    trustModifier: skill?.trustModifier ?? 1.0,
   };
+};
+
+// Fairness safeguard: weekly credit earning cap for UNVERIFIED (probation) teachers.
+// Throws if the teacher has already hit the 5 cr/week limit.
+// Returns the clamped amount the teacher can still earn this week.
+const enforceWeeklyCap = async (teacherId, skillName, creditsToAdd) => {
+  // Check if teacher's skill is UNVERIFIED (probation applies per-skill taught).
+  const skill = await Skill.findOne({
+    userId: teacherId,
+    skillName: new RegExp(`^${(skillName || '').trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+  }).lean();
+
+  // Cap only applies when the skill taught is UNVERIFIED (trust score 0-24).
+  if (!skill || skill.trustBadge !== PROBATION_BADGE) {
+    return creditsToAdd;
+  }
+
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - weekStart.getDay()); // back to Sunday
+  weekStart.setHours(0, 0, 0, 0);
+
+  const agg = await CreditTransaction.aggregate([
+    { $match: { toUser: teacherId, createdAt: { $gte: weekStart } } },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+
+  const alreadyEarned = agg[0]?.total ?? 0;
+  const remaining = PROBATION_WEEKLY_CAP_CR - alreadyEarned;
+
+  if (remaining <= 0) {
+    throw new ApiError(
+      409,
+      'Weekly credit cap reached — you will earn more credits once your trust score reaches Bronze',
+      'WEEKLY_CAP_EXCEEDED'
+    );
+  }
+
+  return Math.min(creditsToAdd, remaining);
+};
+
+// Applies the full Credits = T × S × M formula with the 4-hour session cap on T.
+const resolveCompletionDurations = async (teacherId, skillName, scheduledDuration, rawActualDuration) => {
+  const rawDuration = parsePositiveDuration(rawActualDuration, 'actualDuration') ?? scheduledDuration;
+  // Fairness safeguard: T is capped at 4 hours per session.
+  const actualDuration = Math.min(rawDuration, MAX_SESSION_HOURS);
+
+  const { skillTierMultiplier, trustModifier } = await resolveSkillModifiers(teacherId, skillName);
+
+  const rawCredits = actualDuration * skillTierMultiplier * trustModifier;
+  const chargedCredits = Math.round(rawCredits * 100) / 100; // 2 decimal precision
+
+  const creditFormula = `T=${actualDuration}h S=×${skillTierMultiplier} M=×${trustModifier} credits=${chargedCredits}`;
+
+  return { actualDuration, chargedCredits, skillTierMultiplier, trustModifier, creditFormula };
 };
 
 // Keep participant payload lightweight when listing sessions.
@@ -101,30 +174,33 @@ const ensureTeacherExists = async (teacherId) => {
   return teacher;
 };
 
-const HOSTING_ROLES = new Set(['MENTOR', 'ADMIN', 'admin']);
+const assertCanHostSession = async (userId, role, categoryId) => {
+  if (String(role || '').toUpperCase() === 'ADMIN') return;
 
-const assertCanHostSession = async (userId, role) => {
-  if (HOSTING_ROLES.has(role)) return;
+  // MentorSkill (approved mentor for this category)
+  const mentorSkillQuery = { userId, isActive: true };
+  if (categoryId) mentorSkillQuery.skillCategoryId = categoryId;
+  const mentorSkill = await MentorSkill.findOne(mentorSkillQuery).lean();
+  if (mentorSkill) return;
 
-  const validatedSkill = await Skill.findOne({
-    userId,
-    validationStatus: 'VALIDATED',
-  }).lean();
+  // Validated Skill (mentor or learner who passed skill validation)
+  const skillQuery = { userId, validationStatus: 'VALIDATED' };
+  if (categoryId) skillQuery.categoryId = categoryId;
+  const validatedSkill = await Skill.findOne(skillQuery).lean();
+  if (validatedSkill) return;
 
-  if (!validatedSkill) {
-    throw new ApiError(
-      403,
-      'Only mentors or learners with a validated skill can create sessions',
-      'FORBIDDEN'
-    );
-  }
+  throw new ApiError(
+    403,
+    'You need a validated skill in this category to create sessions',
+    'FORBIDDEN'
+  );
 };
 
 // Host creates a public open session that learners can browse and join.
 const createPublicSession = async (currentUser, payload) => {
   const host = ensureAuthenticatedUser(currentUser);
 
-  await assertCanHostSession(host.userId, host.role);
+  await assertCanHostSession(host.userId, host.role, payload.categoryId);
 
   const parsedCredits = Number(payload.sessionCredits);
   const sessionCredits = Number.isFinite(parsedCredits) && parsedCredits >= 0 ? parsedCredits : 0;
@@ -321,8 +397,52 @@ const deleteSession = async (currentUser, sessionId) => {
   return deletedSession;
 };
 
-// Completes session + transfers credits atomically in one DB transaction.
+// Step 1 of 2-sided confirmation: teacher marks the session as done.
+// Credits do NOT transfer yet — learner must confirm first (fairness safeguard).
 const completeSession = async (currentUser, sessionId, payload = {}) => {
+  const user = ensureAuthenticatedUser(currentUser);
+  const session = await getSessionDocumentById(sessionId);
+
+  if (session.teacherId !== user.userId && user.role !== 'ADMIN') {
+    throw new ApiError(403, 'Only the teacher can mark this session as complete', 'FORBIDDEN');
+  }
+
+  if (session.teacherCompleted) {
+    throw new ApiError(409, 'You have already marked this session as complete', 'SESSION_ALREADY_COMPLETED');
+  }
+
+  if (session.status !== 'ACCEPTED') {
+    throw new ApiError(409, 'Only accepted sessions can be completed', 'SESSION_INVALID_STATUS');
+  }
+
+  const {
+    actualDuration,
+    chargedCredits,
+    skillTierMultiplier,
+    trustModifier,
+    creditFormula,
+  } = await resolveCompletionDurations(
+    session.teacherId,
+    session.skill,
+    session.duration,
+    payload.actualDuration
+  );
+
+  session.actualDuration = actualDuration;
+  session.chargedCredits = chargedCredits;
+  session.skillTierMultiplier = skillTierMultiplier;
+  session.trustModifier = trustModifier;
+  session.creditFormula = creditFormula;
+  session.teacherCompleted = true;
+  session.status = 'AWAITING_CONFIRMATION';
+
+  await session.save();
+  return session.toObject();
+};
+
+// Step 2 of 2-sided confirmation: learner confirms the session happened.
+// Triggers atomic credit transfer + XP award only when BOTH sides have confirmed.
+const confirmCompletion = async (currentUser, sessionId) => {
   const user = ensureAuthenticatedUser(currentUser);
   const mongoSession = await mongoose.startSession();
 
@@ -332,43 +452,47 @@ const completeSession = async (currentUser, sessionId, payload = {}) => {
     await mongoSession.withTransaction(async () => {
       const session = await getSessionDocumentById(sessionId, { session: mongoSession });
 
-      if (session.teacherId !== user.userId && user.role !== 'ADMIN') {
-        throw new ApiError(403, 'Only the teacher can complete this session', 'FORBIDDEN');
+      if (session.learnerId !== user.userId) {
+        throw new ApiError(403, 'Only the learner can confirm this session', 'FORBIDDEN');
       }
 
-      if (session.status === 'COMPLETED' || session.creditsTransferred || session.xpAwarded) {
-        throw new ApiError(409, 'Session has already been completed', 'SESSION_ALREADY_COMPLETED');
+      if (session.status !== 'AWAITING_CONFIRMATION' || !session.teacherCompleted) {
+        throw new ApiError(
+          409,
+          'Session is not awaiting confirmation — the teacher must mark it complete first',
+          'SESSION_INVALID_STATUS'
+        );
       }
 
-      if (session.status !== 'ACCEPTED') {
-        throw new ApiError(409, 'Only accepted sessions can be completed', 'SESSION_INVALID_STATUS');
+      if (session.learnerConfirmed || session.creditsTransferred) {
+        throw new ApiError(409, 'You have already confirmed this session', 'SESSION_ALREADY_CONFIRMED');
       }
 
-      const { actualDuration, chargedCredits } = resolveCompletionDurations(
-        session.duration,
-        payload.actualDuration
+      // Apply weekly cap for probation teachers before finalising.
+      const clampedCredits = await enforceWeeklyCap(
+        session.teacherId,
+        session.skill,
+        session.chargedCredits
       );
 
-      // Transfer amount is capped by the booked duration (1 hour = 1 credit).
       await creditService.transferCredits({
         fromUserId: session.learnerId,
         toUserId: session.teacherId,
-        amount: chargedCredits,
+        amount: clampedCredits,
         sessionId: session.sessionId,
         mongoSession,
       });
 
-      session.actualDuration = actualDuration;
-      session.chargedCredits = chargedCredits;
-      session.status = 'COMPLETED';
+      session.chargedCredits = clampedCredits;
+      session.learnerConfirmed = true;
       session.creditsTransferred = true;
+      session.status = 'COMPLETED';
       session.completedAt = new Date();
 
-      // Teacher earns XP from credits taught: 1 credit = 10 XP (MVP rule, once per session).
       if (!session.xpAwarded) {
         await xpService.awardSessionCompletionXP({
           teacherId: session.teacherId,
-          creditsEarned: chargedCredits,
+          creditsEarned: clampedCredits,
           sessionId: session.sessionId,
           skill: session.skill,
           mongoSession,
@@ -377,9 +501,16 @@ const completeSession = async (currentUser, sessionId, payload = {}) => {
       }
 
       await session.save({ session: mongoSession });
-
       completedSession = session.toObject();
     });
+
+    // Fire-and-forget: badges + streaks do not affect the transaction result.
+    const { teacherId, learnerId } = completedSession;
+    Promise.all([
+      badgeService.checkTeachingBadges(teacherId),
+      streakService.recordActivity(teacherId),
+      streakService.recordActivity(learnerId),
+    ]).catch(() => {});
 
     return completedSession;
   } finally {
@@ -460,16 +591,14 @@ const joinPublicSession = async (currentUser, sessionId) => {
 const canHostSession = async (currentUser) => {
   const user = ensureAuthenticatedUser(currentUser);
 
-  if (HOSTING_ROLES.has(user.role)) {
-    return { canHost: true };
-  }
+  if (String(user.role || '').toUpperCase() === 'ADMIN') return { canHost: true };
 
-  const validatedSkill = await Skill.findOne({
-    userId: user.userId,
-    validationStatus: 'VALIDATED',
-  }).lean();
+  const [mentorSkill, validatedSkill] = await Promise.all([
+    MentorSkill.findOne({ userId: user.userId, isActive: true }).lean(),
+    Skill.findOne({ userId: user.userId, validationStatus: 'VALIDATED' }).lean(),
+  ]);
 
-  return { canHost: Boolean(validatedSkill) };
+  return { canHost: Boolean(mentorSkill || validatedSkill) };
 };
 
 module.exports = {
@@ -483,6 +612,7 @@ module.exports = {
   cancelSession,
   deleteSession,
   completeSession,
+  confirmCompletion,
   getTeacherDirectory,
   canHostSession,
 };

@@ -2,6 +2,7 @@ const { randomUUID } = require('crypto');
 
 const MentorApplication = require('../models/MentorApplication');
 const Mentor = require('../models/Mentor');
+const MentorSkill = require('../models/MentorSkill');
 const Notification = require('../models/Notification');
 const Skill = require('../models/Skill');
 const User = require('../models/User');
@@ -12,17 +13,17 @@ const ensureAuthenticatedUser = (user) => {
   return user;
 };
 
-const submitMentorApplication = async (currentUser) => {
+const submitMentorApplication = async (currentUser, payload = {}) => {
   const user = ensureAuthenticatedUser(currentUser);
 
   if (user.role !== 'LEARNER') {
     throw new ApiError(403, 'Only learners can apply for mentorship', 'FORBIDDEN');
   }
 
-  const validatedSkill = await Skill.findOne({
-    userId: user.userId,
-    validationStatus: 'VALIDATED',
-  }).lean();
+  const skillFilter = { userId: user.userId, validationStatus: 'VALIDATED' };
+  if (payload.skillId?.trim()) skillFilter.skillId = payload.skillId.trim();
+
+  const validatedSkill = await Skill.findOne(skillFilter).lean();
 
   if (!validatedSkill) {
     throw new ApiError(
@@ -87,9 +88,12 @@ const listMentorApplications = async (query = {}) => {
 
   const userIds = [...new Set(applications.map((a) => a.userId))];
   const users = await User.find({ userId: { $in: userIds } })
-    .select('userId firstName lastName email role bio portfolioUrl resumeFileName resumeDownloadUrl')
+    .select('userId firstName lastName email role bio portfolioUrl resumeFileName resumeStoredName')
     .lean();
-  const userMap = new Map(users.map((u) => [u.userId, u]));
+  const userMap = new Map(users.map((u) => [u.userId, {
+    ...u,
+    resumeDownloadUrl: u.resumeStoredName ? `/uploads/resumes/${encodeURIComponent(u.resumeStoredName)}` : '',
+  }]));
 
   return applications.map((app) => ({
     ...app,
@@ -130,6 +134,29 @@ const reviewMentorApplication = async (adminUser, applicationId, { decision, rej
         verifiedAt: new Date(),
         verifiedBy: adminUser.userId,
       });
+    }
+
+    // Create MentorSkill record for the approved skill category (idempotent).
+    const existingMentorSkill = await MentorSkill.findOne({
+      userId: application.userId,
+      skillCategoryId: application.skillCategoryId,
+    }).lean();
+
+    if (!existingMentorSkill) {
+      await MentorSkill.create({
+        mentorSkillId: `MSKL-${randomUUID()}`,
+        userId: application.userId,
+        skillCategoryId: application.skillCategoryId,
+        skillName: application.skillName,
+        verificationDate: new Date(),
+        verifiedBy: adminUser.userId,
+        isActive: true,
+      });
+    } else {
+      await MentorSkill.updateOne(
+        { userId: application.userId, skillCategoryId: application.skillCategoryId },
+        { isActive: true, verificationDate: new Date(), verifiedBy: adminUser.userId }
+      );
     }
 
     await Notification.create({

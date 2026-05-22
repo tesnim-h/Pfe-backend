@@ -3,9 +3,21 @@ const { randomUUID } = require('crypto');
 const Project = require('../models/Project');
 const SkillCategory = require('../models/SkillCategory');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
 const ApiError = require('../utils/ApiError');
+const badgeService = require('./badge.service');
+const streakService = require('./streak.service');
 
 const PROJECT_STATUSES = ['OPEN', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+
+const buildUserNameMap = async (userIds) => {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const users = await User.find({ userId: { $in: ids } }).select('userId firstName lastName').lean();
+  return Object.fromEntries(
+    users.map((u) => [u.userId, [u.firstName, u.lastName].filter(Boolean).join(' ') || u.userId])
+  );
+};
 
 const ensureAuthenticatedUser = (user) => {
   if (!user?.userId) {
@@ -167,7 +179,16 @@ const getProjectById = async (projectId) => {
     throw new ApiError(404, 'Project not found', 'PROJECT_NOT_FOUND');
   }
 
-  return sanitizeProject(project);
+  const raw = sanitizeProject(project);
+  const memberIds = (raw.members || []).map((m) => m.userId);
+  const requestIds = (raw.joinRequests || []).map((r) => r.userId);
+  const nameMap = await buildUserNameMap([raw.ownerId, ...memberIds, ...requestIds]);
+
+  raw.ownerName = nameMap[raw.ownerId] || raw.ownerId;
+  raw.members = (raw.members || []).map((m) => ({ ...m, displayName: nameMap[m.userId] || m.userId }));
+  raw.joinRequests = (raw.joinRequests || []).map((r) => ({ ...r, displayName: nameMap[r.userId] || r.userId }));
+
+  return raw;
 };
 
 const updateProject = async (currentUser, projectId, payload) => {
@@ -192,13 +213,32 @@ const updateProject = async (currentUser, projectId, payload) => {
     project.categoryId = payload.categoryId;
   }
 
+  const prevStatus = project.status;
+
   if (payload.status !== undefined) {
     project.status = payload.status;
   }
 
   await project.save();
 
-  return sanitizeProject(project);
+  const saved = sanitizeProject(project);
+
+  // When project transitions to COMPLETED, check project badges for all participants.
+  if (prevStatus !== 'COMPLETED' && saved.status === 'COMPLETED') {
+    const participantIds = [
+      saved.ownerId,
+      ...(saved.members || []).map((m) => m.userId),
+    ];
+    Promise.all([
+      ...participantIds.map((uid) => badgeService.checkProjectBadges(uid)),
+      streakService.recordActivity(user.userId),
+    ]).catch(() => {});
+  } else {
+    // Owner submitting a project update also counts as a streak day.
+    streakService.recordActivity(user.userId).catch(() => {});
+  }
+
+  return saved;
 };
 
 const deleteProject = async (currentUser, projectId) => {
@@ -238,12 +278,15 @@ const joinProject = async (currentUser, projectId) => {
 
   await project.save();
 
+  // Applying to join a project counts as a streak day.
+  streakService.recordActivity(user.userId).catch(() => {});
+
   await Notification.create({
     notificationId: `NOTIF-${randomUUID()}`,
     userId: project.ownerId,
     notificationType: 'VALIDATION_REQUEST',
     title: 'New project join request',
-    description: `${user.userId} has requested to join your project ${project.title || project.projectId}.`,
+    description: `${[user.firstName, user.lastName].filter(Boolean).join(' ') || user.userId} has requested to join your project ${project.title || project.projectId}.`,
     relatedEntityId: project.projectId,
   });
 
@@ -356,7 +399,9 @@ const listJoinRequests = async (currentUser, projectId) => {
 
   ensureProjectOwner(project, user.userId);
 
-  return sanitizeProject(project).joinRequests || [];
+  const requests = sanitizeProject(project).joinRequests || [];
+  const nameMap = await buildUserNameMap(requests.map((r) => r.userId));
+  return requests.map((r) => ({ ...r, displayName: nameMap[r.userId] || r.userId }));
 };
 
 module.exports = {

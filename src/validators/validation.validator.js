@@ -3,6 +3,12 @@ const Joi = require('joi');
 const acceptValidationRequestSchema = Joi.object({
   validationScore: Joi.number().min(0).max(100).required(),
   validationFeedback: Joi.string().trim().allow('').max(1000).optional(),
+  // Mentor assigns the Skill Tier (controls S multiplier in Credits = T × S × M).
+  skillTier: Joi.string()
+    .trim()
+    .uppercase()
+    .valid('STARTER', 'BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT')
+    .optional(),
 });
 
 const rejectValidationRequestSchema = Joi.object({

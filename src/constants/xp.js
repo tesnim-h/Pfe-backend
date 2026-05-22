@@ -16,11 +16,13 @@ const XP_PER_CREDIT_EARNED = 10;
 
 // Known sources — extend when adding bonus events, challenges, endorsements, etc.
 const XP_SOURCES = {
-  SESSION_COMPLETED: 'session_completed',
-  BONUS_EVENT: 'bonus_event',
-  CHALLENGE_REWARD: 'challenge_reward',
-  ENDORSEMENT: 'endorsement',
-  COMMUNITY_CONTRIBUTION: 'community_contribution',
+  SESSION_COMPLETED:       'session_completed',
+  BONUS_EVENT:             'bonus_event',
+  CHALLENGE_PARTICIPATION: 'challenge_participation',
+  CHALLENGE_WINNER:        'challenge_winner',
+  ENDORSEMENT:             'endorsement',
+  STREAK_MILESTONE:        'streak_milestone',
+  COMMUNITY_CONTRIBUTION:  'community_contribution',
 };
 
 const XP_HISTORY_LIMIT = 100;

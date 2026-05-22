@@ -5,6 +5,7 @@ const path = require('path');
 const City = require('../models/City');
 const Country = require('../models/Country');
 const User = require('../models/User');
+const Skill = require('../models/Skill');
 const ApiError = require('../utils/ApiError');
 const { hashPassword, comparePassword } = require('../utils/hash');
 const { ensureLearnerCanOfferSkill } = require('./validation.service');
@@ -449,8 +450,20 @@ const getUserDocumentById = async (userId, options = {}) => {
 
 const getUserPublicProfile = async (userId) => {
   const user = await getUserDocumentById(userId, { activeOnly: true });
+  const publicUser = sanitizePublicUser(user);
 
-  return sanitizePublicUser(user);
+  const skillRecords = await Skill.find({ userId, validationStatus: 'VALIDATED' })
+    .select('skillId skillName categoryId validationScore')
+    .lean();
+
+  publicUser.validatedSkills = skillRecords.map((s) => ({
+    skillId: s.skillId,
+    skillName: s.skillName,
+    categoryId: s.categoryId,
+    validationScore: s.validationScore ?? 0,
+  }));
+
+  return publicUser;
 };
 
 const getUserById = async (id) => {
