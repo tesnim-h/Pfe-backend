@@ -31,28 +31,8 @@ const login = async (req, res, next) => {
   }
 };
 
-const forgotPassword = async (req, res, next) => {
-  try {
-    const result = await authService.forgotPassword(req.body.email);
-    res.status(200).json(new ApiResponse(200, result, result.message));
-  } catch (error) {
-    next(error);
-  }
-};
-
-const resetPassword = async (req, res, next) => {
-  try {
-    const result = await authService.resetPassword(req.body.email, req.body.code, req.body.password);
-    res.status(200).json(new ApiResponse(200, result, 'Password reset successful'));
-  } catch (error) {
-    next(error);
-  }
-};
-
 module.exports = {
   register,
   registerAdmin,
   login,
-  forgotPassword,
-  resetPassword,
 };

@@ -10,7 +10,6 @@ const { hashPassword, comparePassword } = require('../utils/hash');
 const { signAccessToken } = require('../utils/jwt');
 const { generateOtp, hashOtp } = require('../utils/token');
 const { sanitizeUser } = require('./user.service');
-const sendEmail = require('../utils/email');
 const SystemSettings = require('../models/SystemSettings');
 const { DEFAULT_ADMIN_PERMISSIONS } = require('../constants/admin');
 
@@ -103,64 +102,6 @@ const login = async ({ email, password }) => {
   return buildAuthPayload(user);
 };
 
-const forgotPassword = async (email) => {
-  const user = await User.findOne({ email });
-  const genericMessage = 'If that email exists, a verification code has been sent.';
-
-  if (!user) {
-    return { message: genericMessage };
-  }
-
-  const { code, hashedCode, expires } = generateOtp();
-
-  user.passwordResetToken = hashedCode;
-  user.passwordResetExpires = expires;
-  await user.save({ validateBeforeSave: false });
-
-  try {
-    const emailResult = await sendEmail({
-      to: user.email,
-      subject: 'Your Password Reset Code',
-      text: `Your verification code is: ${code}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, ignore this email.`,
-    });
-
-    if (emailResult?.delivery === 'console') {
-      return {
-        message: 'SMTP is not configured in development. The verification code was printed in the backend console.',
-        debugCode: code,
-      };
-    }
-  } catch (emailError) {
-    console.error('[EMAIL ERROR]', emailError.message);
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
-    await user.save({ validateBeforeSave: false });
-    throw new ApiError(500, 'Failed to send reset email. Please try again.', 'EMAIL_SEND_FAILED');
-  }
-
-  return { message: genericMessage };
-};
-
-const resetPassword = async (email, code, newPassword) => {
-  const hashedCode = hashOtp(code);
-
-  const user = await User.findOne({
-    email,
-    passwordResetToken: hashedCode,
-    passwordResetExpires: { $gt: Date.now() },
-  }).select('+passwordResetToken +passwordResetExpires');
-
-  if (!user) {
-    throw new ApiError(400, 'Invalid or expired code', 'INVALID_RESET_CODE');
-  }
-
-  user.passwordHash = await hashPassword(newPassword);
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save({ validateBeforeSave: false });
-
-  return buildAuthPayload(user);
-};
 
 const registerAdmin = async (payload, options = {}) => {
   const bootstrapSecret = String(options.bootstrapSecret || '').trim();
@@ -235,6 +176,4 @@ module.exports = {
   register,
   registerAdmin,
   login,
-  forgotPassword,
-  resetPassword,
 };

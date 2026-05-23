@@ -38,33 +38,8 @@ const loginSchema = Joi.object({
   password: Joi.string().required(),
 });
 
-const forgotPasswordSchema = Joi.object({
-  email: Joi.string().email().trim().lowercase().required(),
-});
-
-const resetPasswordSchema = Joi.object({
-  email: Joi.string().email().trim().lowercase().required(),
-  code: Joi.string().length(6).pattern(/^\d{6}$/).required().messages({
-    'string.length': 'Verification code must be 6 digits',
-    'string.pattern.base': 'Verification code must contain only digits',
-    'any.required': 'Verification code is required',
-  }),
-  password: Joi.string()
-    .min(8)
-    .pattern(/[A-Z]/, 'uppercase letter')
-    .pattern(/[0-9]/, 'number')
-    .required()
-    .messages({
-      'string.min': 'Password must be at least 8 characters long',
-      'string.pattern.name': 'Password must contain at least one {#name}',
-      'any.required': 'Password is required',
-    }),
-});
-
 module.exports = {
   registerSchema,
   registerAdminSchema,
   loginSchema,
-  forgotPasswordSchema,
-  resetPasswordSchema,
 };
