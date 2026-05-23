@@ -128,6 +128,15 @@ const updateReport = async (req, res, next) => {
   }
 };
 
+const deleteSetting = async (req, res, next) => {
+  try {
+    const result = await adminService.deleteSetting(req.params.key, req.user, getRequestMeta(req));
+    res.status(200).json(new ApiResponse(200, result, 'Setting deleted successfully'));
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getSettings = async (req, res, next) => {
   try {
     const settings = await adminService.listSettings();
@@ -165,4 +174,5 @@ module.exports = {
   updateReport,
   getSettings,
   updateSetting,
+  deleteSetting,
 };

@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 
 const CreditTransaction = require('../models/CreditTransaction');
 const MentorSkill = require('../models/MentorSkill');
+const Notification = require('../models/Notification');
 const Session = require('../models/Session');
 const Skill = require('../models/Skill');
 const User = require('../models/User');
@@ -113,9 +114,14 @@ const enforceWeeklyCap = async (teacherId, skillName, creditsToAdd) => {
 
 // Applies the full Credits = T × S × M formula with the 4-hour session cap on T.
 const resolveCompletionDurations = async (teacherId, skillName, scheduledDuration, rawActualDuration) => {
-  const rawDuration = parsePositiveDuration(rawActualDuration, 'actualDuration') ?? scheduledDuration;
-  // Fairness safeguard: T is capped at 4 hours per session.
-  const actualDuration = Math.min(rawDuration, MAX_SESSION_HOURS);
+  const parsedActual = parsePositiveDuration(rawActualDuration, 'actualDuration');
+  // Billed duration = min(declared, actual) — learner is never charged more than what was scheduled.
+  // If no actual duration provided, fall back to scheduled duration.
+  const billedBase = parsedActual != null
+    ? Math.min(parsedActual, scheduledDuration)
+    : scheduledDuration;
+  // Hard cap at MAX_SESSION_HOURS (4h) per session.
+  const actualDuration = Math.min(billedBase, MAX_SESSION_HOURS);
 
   const { skillTierMultiplier, trustModifier } = await resolveSkillModifiers(teacherId, skillName);
 
@@ -175,7 +181,8 @@ const ensureTeacherExists = async (teacherId) => {
 };
 
 const assertCanHostSession = async (userId, role, categoryId) => {
-  if (String(role || '').toUpperCase() === 'ADMIN') return;
+  const roleUpper = String(role || '').toUpperCase();
+  if (roleUpper === 'ADMIN' || roleUpper === 'MENTOR') return;
 
   // MentorSkill (approved mentor for this category)
   const mentorSkillQuery = { userId, isActive: true };
@@ -202,8 +209,10 @@ const createPublicSession = async (currentUser, payload) => {
 
   await assertCanHostSession(host.userId, host.role, payload.categoryId);
 
-  const parsedCredits = Number(payload.sessionCredits);
-  const sessionCredits = Number.isFinite(parsedCredits) && parsedCredits >= 0 ? parsedCredits : 0;
+  const rawDuration = payload.duration !== undefined
+    ? parsePositiveDuration(payload.duration, 'duration')
+    : 1;
+  const scheduledDuration = Math.min(rawDuration ?? 1, MAX_SESSION_HOURS);
 
   const session = await Session.create({
     sessionId: `SES-${randomUUID()}`,
@@ -212,11 +221,10 @@ const createPublicSession = async (currentUser, payload) => {
     title: payload.title?.trim() || '',
     skill: payload.title?.trim() || 'General',
     categoryId: payload.categoryId || '',
-    duration: 1,
+    duration: scheduledDuration,
     date: payload.date,
     message: payload.description?.trim() || '',
     googleMeetLink: payload.googleMeetLink?.trim() || '',
-    sessionCredits,
     status: 'ACCEPTED',
   });
 
@@ -284,20 +292,17 @@ const listSessionsForUser = async (currentUser, query = {}) => {
 };
 
 // Lists sessions across the app for discovery views.
-const listSessionsDirectory = async (currentUser, query = {}) => {
+// Only returns genuine open/public sessions (no parentSessionId, no assigned learner)
+// so that child join-request sessions don't pollute the catalog.
+const listSessionsDirectory = async (currentUser) => {
   ensureAuthenticatedUser(currentUser);
-  const status = query.status?.trim().toUpperCase();
-  const filter = {};
 
-  if (status && status !== 'ALL') {
-    if (!SESSION_STATUSES.includes(status)) {
-      throw new ApiError(400, 'Invalid status filter', 'VALIDATION_ERROR');
-    }
+  const filter = {
+    parentSessionId: { $in: ['', null] },
+    status: { $in: ['PENDING', 'ACCEPTED'] },
+  };
 
-    filter.status = status;
-  }
-
-  const sessions = await Session.find(filter).sort({ date: -1, createdAt: -1 }).limit(200).lean();
+  const sessions = await Session.find(filter).sort({ createdAt: -1 }).limit(20).lean();
   return withPopulatedParticipants(sessions);
 };
 
@@ -397,22 +402,27 @@ const deleteSession = async (currentUser, sessionId) => {
   return deletedSession;
 };
 
-// Step 1 of 2-sided confirmation: teacher marks the session as done.
-// Credits do NOT transfer yet — learner must confirm first (fairness safeguard).
+// Step 1 of 2-sided confirmation: either participant marks the session as done.
+// Credits do NOT transfer yet — the other party must confirm first (fairness safeguard).
 const completeSession = async (currentUser, sessionId, payload = {}) => {
   const user = ensureAuthenticatedUser(currentUser);
   const session = await getSessionDocumentById(sessionId);
 
-  if (session.teacherId !== user.userId && user.role !== 'ADMIN') {
-    throw new ApiError(403, 'Only the teacher can mark this session as complete', 'FORBIDDEN');
+  const isParticipant = session.teacherId === user.userId || session.learnerId === user.userId;
+  if (!isParticipant && user.role !== 'ADMIN') {
+    throw new ApiError(403, 'Only a session participant can mark this session as complete', 'FORBIDDEN');
   }
 
   if (session.teacherCompleted) {
-    throw new ApiError(409, 'You have already marked this session as complete', 'SESSION_ALREADY_COMPLETED');
+    throw new ApiError(409, 'This session has already been marked as complete', 'SESSION_ALREADY_COMPLETED');
   }
 
   if (session.status !== 'ACCEPTED') {
     throw new ApiError(409, 'Only accepted sessions can be completed', 'SESSION_INVALID_STATUS');
+  }
+
+  if (session.date && new Date(session.date).getTime() > Date.now()) {
+    throw new ApiError(409, 'Session has not taken place yet', 'SESSION_NOT_YET_PASSED');
   }
 
   const {
@@ -434,14 +444,15 @@ const completeSession = async (currentUser, sessionId, payload = {}) => {
   session.trustModifier = trustModifier;
   session.creditFormula = creditFormula;
   session.teacherCompleted = true;
+  session.completedByUserId = user.userId;
   session.status = 'AWAITING_CONFIRMATION';
 
   await session.save();
   return session.toObject();
 };
 
-// Step 2 of 2-sided confirmation: learner confirms the session happened.
-// Triggers atomic credit transfer + XP award only when BOTH sides have confirmed.
+// Step 2 of 2-sided confirmation: the OTHER participant confirms the session happened.
+// Triggers atomic credit transfer + XP award.
 const confirmCompletion = async (currentUser, sessionId) => {
   const user = ensureAuthenticatedUser(currentUser);
   const mongoSession = await mongoose.startSession();
@@ -452,20 +463,26 @@ const confirmCompletion = async (currentUser, sessionId) => {
     await mongoSession.withTransaction(async () => {
       const session = await getSessionDocumentById(sessionId, { session: mongoSession });
 
-      if (session.learnerId !== user.userId) {
-        throw new ApiError(403, 'Only the learner can confirm this session', 'FORBIDDEN');
+      // The confirming user must be the OTHER party (not the one who marked complete).
+      const initiatorId = session.completedByUserId || session.teacherId;
+      const isOtherParty =
+        (session.teacherId === user.userId || session.learnerId === user.userId) &&
+        user.userId !== initiatorId;
+
+      if (!isOtherParty) {
+        throw new ApiError(403, 'Only the other participant can confirm this session', 'FORBIDDEN');
       }
 
       if (session.status !== 'AWAITING_CONFIRMATION' || !session.teacherCompleted) {
         throw new ApiError(
           409,
-          'Session is not awaiting confirmation — the teacher must mark it complete first',
+          'Session is not awaiting confirmation',
           'SESSION_INVALID_STATUS'
         );
       }
 
       if (session.learnerConfirmed || session.creditsTransferred) {
-        throw new ApiError(409, 'You have already confirmed this session', 'SESSION_ALREADY_CONFIRMED');
+        throw new ApiError(409, 'This session has already been confirmed', 'SESSION_ALREADY_CONFIRMED');
       }
 
       // Apply weekly cap for probation teachers before finalising.
@@ -585,20 +602,44 @@ const joinPublicSession = async (currentUser, sessionId) => {
     status: 'PENDING',
   });
 
+  const learnerName = [learner.firstName, learner.lastName].filter(Boolean).join(' ') || learner.email || 'A learner';
+  const sessionTitle = publicSession.title || publicSession.skill || 'your session';
+
+  Notification.create({
+    notificationId: `NOTIF-${randomUUID()}`,
+    userId: publicSession.teacherId,
+    notificationType: 'SESSION_REQUEST',
+    title: 'New join request',
+    description: `${learnerName} requested to join "${sessionTitle}".`,
+    relatedEntityId: session.sessionId,
+  }).catch(() => {});
+
   return session.toObject();
 };
 
 const canHostSession = async (currentUser) => {
   const user = ensureAuthenticatedUser(currentUser);
 
-  if (String(user.role || '').toUpperCase() === 'ADMIN') return { canHost: true };
+  const roleUpper = String(user.role || '').toUpperCase();
 
-  const [mentorSkill, validatedSkill] = await Promise.all([
-    MentorSkill.findOne({ userId: user.userId, isActive: true }).lean(),
-    Skill.findOne({ userId: user.userId, validationStatus: 'VALIDATED' }).lean(),
-  ]);
+  if (roleUpper === 'ADMIN') return { canHost: true, allowedCategoryIds: [] };
 
-  return { canHost: Boolean(mentorSkill || validatedSkill) };
+  if (roleUpper === 'MENTOR') {
+    const mentorSkills = await MentorSkill.find({ userId: user.userId, isActive: true })
+      .select('skillCategoryId').lean();
+    const allowedCategoryIds = [...new Set(mentorSkills.map((ms) => ms.skillCategoryId).filter(Boolean))];
+    return { canHost: true, allowedCategoryIds };
+  }
+
+  const validatedSkills = await Skill.find({
+    userId: user.userId,
+    validationStatus: 'VALIDATED',
+  }).select('categoryId').lean();
+
+  if (!validatedSkills.length) return { canHost: false, allowedCategoryIds: [] };
+
+  const allowedCategoryIds = [...new Set(validatedSkills.map((s) => s.categoryId).filter(Boolean))];
+  return { canHost: true, allowedCategoryIds };
 };
 
 module.exports = {

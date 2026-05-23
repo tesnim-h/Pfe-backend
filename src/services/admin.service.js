@@ -563,7 +563,6 @@ const getDashboard = async () => {
   const [
     totalUsers,
     activeUsers,
-    suspendedUsers,
     bannedUsers,
     totalAdmins,
     totalLearners,
@@ -585,7 +584,6 @@ const getDashboard = async () => {
   ] = await Promise.all([
     User.countDocuments({}),
     User.countDocuments({ accountStatus: 'ACTIVE' }),
-    User.countDocuments({ accountStatus: 'SUSPENDED' }),
     User.countDocuments({ accountStatus: 'BANNED' }),
     User.countDocuments({ role: { $in: ADMIN_ROLE_QUERY_VALUES } }),
     User.countDocuments({ role: 'LEARNER' }),
@@ -625,7 +623,6 @@ const getDashboard = async () => {
     users: {
       total: totalUsers,
       active: activeUsers,
-      suspended: suspendedUsers,
       banned: bannedUsers,
       admins: totalAdmins,
       learners: totalLearners,
@@ -787,6 +784,29 @@ const updateSetting = async (key, payload = {}, currentUser, options = {}) => {
   return toPlainObject(setting);
 };
 
+const deleteSetting = async (key, currentUser, options = {}) => {
+  const settingKey = normalizeSettingKey(key);
+  const adminAccess = await buildAdminAccessContext(currentUser);
+  const setting = await SystemSettings.findOne({ settingKey });
+
+  if (!setting) {
+    throw new ApiError(404, 'Setting not found', 'SETTING_NOT_FOUND');
+  }
+
+  await setting.deleteOne();
+
+  await createAuditLog({
+    adminProfile: adminAccess.adminProfile,
+    actionType: 'SYSTEM_SETTING_DELETED',
+    targetEntityId: settingKey,
+    targetEntityType: 'SystemSetting',
+    details: { settingKey },
+    ipAddress: options.ipAddress || '',
+  });
+
+  return { settingKey };
+};
+
 module.exports = {
   listUsers,
   getSingleUser,
@@ -801,4 +821,5 @@ module.exports = {
   updateReport,
   listSettings,
   updateSetting,
+  deleteSetting,
 };

@@ -48,6 +48,11 @@ router.put(
   validate(updateSettingSchema),
   adminController.updateSetting
 );
+router.delete(
+  '/settings/:key',
+  requireAdminPermissions('manage_settings'),
+  adminController.deleteSetting
+);
 router.get('/users', requireAdminPermissions('manage_users'), adminController.getAllUsers);
 router.get('/users/:id', requireAdminPermissions('manage_users'), adminController.getSingleUser);
 router.put(

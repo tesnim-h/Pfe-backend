@@ -5,8 +5,8 @@ const createPublicSessionSchema = Joi.object({
   title: Joi.string().trim().min(3).max(160).required(),
   description: Joi.string().trim().allow('').max(2000).optional(),
   categoryId: Joi.string().trim().allow('').optional(),
+  duration: Joi.number().positive().max(4).optional(),
   date: Joi.date().iso().required(),
-  sessionCredits: Joi.number().min(0).optional(),
   googleMeetLink: Joi.string().trim().uri().allow('').optional(),
 });
 

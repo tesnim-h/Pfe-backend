@@ -102,7 +102,7 @@ const sessionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    // Two-sided confirmation: teacher marks done first, learner confirms before credits transfer.
+    // Two-sided confirmation: either party marks done first, the other confirms.
     teacherCompleted: {
       type: Boolean,
       default: false,
@@ -110,6 +110,12 @@ const sessionSchema = new mongoose.Schema(
     learnerConfirmed: {
       type: Boolean,
       default: false,
+    },
+    // userId of whoever called completeSession first (teacher or learner).
+    completedByUserId: {
+      type: String,
+      default: '',
+      trim: true,
     },
     // Snapshot of S and M at completion time (audit trail for Credits = T × S × M).
     skillTierMultiplier: {

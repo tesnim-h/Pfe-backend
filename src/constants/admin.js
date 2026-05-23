@@ -14,7 +14,7 @@ const DEFAULT_ADMIN_PERMISSIONS = Object.freeze([...ADMIN_PERMISSION_KEYS]);
 
 const ADMIN_ROLE_VALUES = Object.freeze(['admin', 'ADMIN']);
 const ADMIN_ASSIGNABLE_ROLES = Object.freeze(['user', 'admin', 'LEARNER', 'MENTOR', 'ADMIN']);
-const USER_ACCOUNT_STATUSES = Object.freeze(['ACTIVE', 'SUSPENDED', 'BANNED']);
+const USER_ACCOUNT_STATUSES = Object.freeze(['ACTIVE', 'BANNED']);
 const REPORT_STATUSES = Object.freeze(['PENDING', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED']);
 const PUBLIC_REGISTERABLE_ROLES = Object.freeze(['LEARNER', 'MENTOR']);
 

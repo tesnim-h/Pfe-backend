@@ -6,6 +6,7 @@ const City = require('../models/City');
 const Country = require('../models/Country');
 const User = require('../models/User');
 const Skill = require('../models/Skill');
+const MentorSkill = require('../models/MentorSkill');
 const ApiError = require('../utils/ApiError');
 const { hashPassword, comparePassword } = require('../utils/hash');
 const { ensureLearnerCanOfferSkill } = require('./validation.service');
@@ -452,15 +453,23 @@ const getUserPublicProfile = async (userId) => {
   const user = await getUserDocumentById(userId, { activeOnly: true });
   const publicUser = sanitizePublicUser(user);
 
-  const skillRecords = await Skill.find({ userId, validationStatus: 'VALIDATED' })
-    .select('skillId skillName categoryId validationScore')
-    .lean();
+  const [skillRecords, mentorSkillRecords] = await Promise.all([
+    Skill.find({ userId, validationStatus: 'VALIDATED' })
+      .select('skillId skillName categoryId validationScore').lean(),
+    MentorSkill.find({ userId, isActive: true })
+      .select('skillName skillCategoryId').lean(),
+  ]);
 
   publicUser.validatedSkills = skillRecords.map((s) => ({
     skillId: s.skillId,
     skillName: s.skillName,
     categoryId: s.categoryId,
     validationScore: s.validationScore ?? 0,
+  }));
+
+  publicUser.mentorSkills = mentorSkillRecords.map((m) => ({
+    skillName: m.skillName,
+    skillCategoryId: m.skillCategoryId,
   }));
 
   return publicUser;

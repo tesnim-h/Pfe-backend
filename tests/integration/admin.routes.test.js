@@ -380,10 +380,10 @@ describe('admin routes RBAC, moderation, and audit flows', () => {
 
     settings = [
       {
-        settingId: 'SETTING-1',
-        settingKey: 'default_session_credit_rate',
-        settingValue: '6',
-        description: 'Default session credit rate',
+        settingId: 'SETTING-001',
+        settingKey: 'initial_credit_allocation',
+        settingValue: '14',
+        description: 'Default credits assigned to new active users.',
         updatedBy: 'USR-ADMIN',
         updatedAt: new Date('2026-05-01T13:00:00.000Z'),
       },
@@ -605,15 +605,15 @@ describe('admin routes RBAC, moderation, and audit flows', () => {
     expect(settingsResponse.body.data).toHaveLength(1);
 
     const updateSettingResponse = await request(app)
-      .put('/api/admin/settings/default_session_credit_rate')
+      .put('/api/admin/settings/initial_credit_allocation')
       .set('Authorization', 'Bearer admin-token')
       .send({
-        value: 8,
+        value: 20,
         description: 'Updated by admin',
       });
 
     expect(updateSettingResponse.status).toBe(200);
-    expect(updateSettingResponse.body.data.settingValue).toBe('8');
+    expect(updateSettingResponse.body.data.settingValue).toBe('20');
     expect(updateSettingResponse.body.data.description).toBe('Updated by admin');
 
     const deleteSelfResponse = await request(app)

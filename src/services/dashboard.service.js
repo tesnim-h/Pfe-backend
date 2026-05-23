@@ -347,20 +347,34 @@ const buildMentorDirectory = async (currentUserId, { limit = 0 } = {}) => {
   }
 
   const mentorIds = mentors.map((mentor) => mentor.userId);
-  const [ratingSummaryMap, skillMap] = await Promise.all([
+  const [ratingSummaryMap, skillMap, mentorSkillDocs] = await Promise.all([
     buildRatingSummaryMap(mentorIds),
     buildSkillRecordsByUserId(mentorIds),
+    MentorSkill.find({ userId: { $in: mentorIds }, isActive: true })
+      .select('userId skillName skillCategoryId').lean(),
   ]);
+
+  const mentorSkillMap = new Map();
+  mentorSkillDocs.forEach((ms) => {
+    if (!mentorSkillMap.has(ms.userId)) mentorSkillMap.set(ms.userId, []);
+    mentorSkillMap.get(ms.userId).push(ms.skillName);
+  });
 
   return mentors
     .map((mentor) => {
       const skillRecords = skillMap.get(mentor.userId) || [];
+      const mentorSkillNames = mentorSkillMap.get(mentor.userId) || [];
       const skills = getCombinedSkillNames(mentor, skillRecords).slice(0, 6);
-      const topSkill = skillRecords[0]?.skillName || skills[0] || 'General mentoring';
+      const topSkill = mentorSkillNames[0] || skillRecords[0]?.skillName || skills[0] || 'General mentoring';
       const ratingSummary = ratingSummaryMap.get(mentor.userId) || {
         averageRating: 0,
         totalReviews: 0,
       };
+
+      const allSkillKeys = [
+        ...mentorSkillNames.map(buildSkillKey),
+        ...skills.map(buildSkillKey),
+      ].filter((v, i, arr) => arr.indexOf(v) === i);
 
       return {
         id: mentor.userId,
@@ -369,10 +383,10 @@ const buildMentorDirectory = async (currentUserId, { limit = 0 } = {}) => {
         category: skillRecords[0]?.categoryName || 'General',
         rating: ratingSummary.averageRating.toFixed(1),
         reviews: ratingSummary.totalReviews,
-        skills,
+        skills: mentorSkillNames.length > 0 ? mentorSkillNames : skills,
         price: '1 credit/hr',
         specialty: topSkill,
-        skillIds: skills.map(buildSkillKey),
+        skillIds: allSkillKeys,
       };
     })
     .sort((left, right) => {
@@ -724,6 +738,9 @@ const getProfile = async (currentUser) => {
       links,
     },
     reviews,
+    badges: Array.isArray(user.badges) ? user.badges : [],
+    currentStreak: user.currentStreak ?? 0,
+    longestStreak: user.longestStreak ?? 0,
   };
 };
 

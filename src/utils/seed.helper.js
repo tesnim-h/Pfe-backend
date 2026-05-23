@@ -106,7 +106,6 @@ const ids = {
   },
   settings: {
     initialCredits: 'SETTING-001',
-    sessionRate: 'SETTING-002',
   },
   stats: 'PLATFORM-STATISTICS-001',
 };
@@ -631,14 +630,6 @@ const buildSeedCollections = async () => {
       settingKey: 'initial_credit_allocation',
       settingValue: '10',
       description: 'Default credits assigned to new active users.',
-      updatedBy: ids.users.admin,
-      updatedAt: at(-20),
-    },
-    {
-      settingId: ids.settings.sessionRate,
-      settingKey: 'default_session_credit_rate',
-      settingValue: '6',
-      description: 'Default credits exchanged for a standard session.',
       updatedBy: ids.users.admin,
       updatedAt: at(-20),
     },
